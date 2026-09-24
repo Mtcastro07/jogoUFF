@@ -1,0 +1,17 @@
+{
+  // F5 (ou o painel "Run and Debug") sempre roda o JOGO, nao o arquivo que
+  // estiver aberto no editor. Os modulos dentro de jogo/ usam imports
+  // relativos e nao podem ser executados sozinhos -- so `main.py` roda.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Rhythm Striker",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}
