@@ -1,0 +1,21 @@
+# Ambiente virtual: cada um cria o seu (veja COMO RODAR no topo do main.py)
+.venv/
+venv/
+
+# Bytecode que o Python gera ao rodar o jogo
+__pycache__/
+*.py[cod]
+
+# Recordes do jogador: o jogo cria e grava sozinho (jogo/save.py)
+savegame.json
+savegame.json.tmp
+
+# macOS
+.DS_Store
+._*
+
+# Sobras da tentativa de recuperar a versao antiga do jogo a partir dos .pyc
+/*_dis.txt
+/*_decompiled.py
+/scratch.py
+/pycdc/
