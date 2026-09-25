@@ -9,7 +9,7 @@ import re
 
 import pygame
 
-from .config import SPRITESHEET, TILE, RAIZ
+from .config import SPRITESHEET, TILE, RAIZ, LEO_DESENHADO
 
 DIR_ART = os.path.join(RAIZ, "assets", "art")
 
@@ -37,6 +37,11 @@ PERSONAGEM = {
 # animacao "pouso", o quadro do pe tocando o chao. Na Ozzbit: 1..5 no ar, sem pouso.
 RAMPA = [1, 2, 3, 4, 5]
 TEM_POUSO = False
+# A Ozzbit tem folhas separadas de QUEDA (do apice para baixo) e de laco de
+# queda, alem do pulo: com elas, a subida usa os quadros de subida e a descida
+# os de queda. SUBIDA fica None quando o heroi e o Leo gerado (uma rampa so).
+FOLHAS = os.path.join(os.path.dirname(SPRITESHEET), "individual_sheets")
+SUBIDA = None
 # Sem pose propria de sustentar a nota, o Leo corre em cima da ponte de luz --
 # no compasso, como no chao.
 SEGURA_CORRE = False
@@ -137,6 +142,19 @@ def _variantes(fase, base):
     return achadas or ([base] if tem_peca(base, fase) else [])
 
 
+def recuar(img, cor, k):
+    """
+    Copia puxada `k` (0..1) na direcao de `cor`, mantendo o alfa: o que e
+    cenario vai para tras e sai da faixa em que o jogador le o que importa.
+    """
+    def faz():
+        s = img.copy()
+        s.fill((int(255 * (1 - k)),) * 3, special_flags=pygame.BLEND_RGB_MULT)
+        s.fill(tuple(int(c * k) for c in cor[:3]), special_flags=pygame.BLEND_RGB_ADD)
+        return s
+    return _memo(("recuar", id(img), cor, k), faz)
+
+
 def fantasma(img, alfa):
     """Copia translucida (cache): a ponte apagada nao pode parecer chao firme."""
     def faz():
@@ -148,8 +166,8 @@ def fantasma(img, alfa):
 
 def carregar():
     """Carrega os quadros do heroi. Chamar uma vez, depois de abrir a janela."""
-    global RAMPA, TEM_POUSO, SEGURA_CORRE
-    proprio = _carregar_personagem()
+    global RAMPA, TEM_POUSO, SEGURA_CORRE, SUBIDA
+    proprio = _carregar_personagem() if LEO_DESENHADO else None
     if proprio is not None:
         # o pulo correndo termina no pouso: os quadros de antes sao o ar
         *ar, pouso = proprio["pula"]
@@ -174,6 +192,21 @@ def carregar():
                                   RECORTE.w, RECORTE.h)), ESCALA)
             for i in range(n)]
         _ancoras[nome] = (CENTRO, PES)
+    # queda e laco de queda (folhas individuais, mesma grade de 128 px)
+    queda = [(n, a) for n, a in (("cai", "male_hero-fall.png"), ("caindo", "male_hero-fall_loop.png"))
+             if os.path.exists(os.path.join(FOLHAS, a))]
+    for nome, arq in queda:
+        tira_ = pygame.image.load(os.path.join(FOLHAS, arq)).convert_alpha()
+        _quadros[nome] = [
+            pygame.transform.scale_by(
+                tira_.subsurface((i * CELULA + RECORTE.x, RECORTE.y, RECORTE.w, RECORTE.h)), ESCALA)
+            for i in range(tira_.get_width() // CELULA)]
+        _ancoras[nome] = (CENTRO, PES)
+    if len(queda) == 2:
+        SUBIDA = [1, 2, 3, 4, 5]
+        # o quadro 0 do pulo (agachado) nunca aparecia: vira a pose do pouso
+        _quadros["pouso"], _ancoras["pouso"] = [_quadros["pula"][0]], (CENTRO, PES)
+        TEM_POUSO = True
 
 
 def _carregar_personagem():
@@ -226,10 +259,38 @@ def quadro_do_pulo(k):
     return RAMPA[min(len(RAMPA) - 1, max(0, int(k * len(RAMPA))))]
 
 
-def desenhar_heroi(tela, nome, i, cx, pes_y):
-    """Desenha o quadro com os pes em (cx, pes_y)."""
+def quadro_no_ar(vy, v_pulo, tempo):
+    """
+    (animacao, quadro) do heroi no ar. Subindo, os quadros de subida pela
+    velocidade (0 = acabou de sair do chao, 1 = apice); descendo, os de queda;
+    caindo alem de um pulo normal (degrau abaixo, buraco), o laco de queda.
+    """
+    if SUBIDA is None:
+        return "pula", quadro_do_pulo((vy + v_pulo) / (2.0 * v_pulo))
+    if vy < 0.0:
+        k = 1.0 + vy / v_pulo
+        return "pula", SUBIDA[min(len(SUBIDA) - 1, max(0, int(k * len(SUBIDA))))]
+    k = vy / v_pulo
+    if k < 1.0:
+        return "cai", min(n_quadros("cai") - 1, int(k * n_quadros("cai")))
+    return "caindo", tempo * 10
+
+
+def desenhar_heroi(tela, nome, i, cx, pes_y, escala=(1.0, 1.0)):
+    """
+    Desenha o quadro com os pes em (cx, pes_y). `escala` (largura, altura) e o
+    esticar-e-amassar do pulo: cresce a partir dos pes, que nao saem do lugar.
+    """
     ax, ay = _ancoras[nome]
-    tela.blit(quadro(nome, i), (int(cx - ax), int(pes_y - ay)))
+    q = quadro(nome, i)
+    sx, sy = escala
+    if (sx, sy) != (1.0, 1.0):
+        def faz():
+            return pygame.transform.scale(q, (max(1, round(q.get_width() * sx)),
+                                              max(1, round(q.get_height() * sy))))
+        q = _memo(("heroi", id(q), sx, sy), faz)
+        ax, ay = ax * sx, ay * sy
+    tela.blit(q, (int(cx - ax), int(pes_y - ay)))
 
 
 # --------------------------------------------------------------------- cores

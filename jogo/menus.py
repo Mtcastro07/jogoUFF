@@ -7,7 +7,7 @@ import math
 
 import pygame
 
-from . import arte, fases, ui
+from . import arte, efeitos, fases, ui
 from .audio import audio
 from .cenario import Cenario, ceu
 from .config import (LARGURA, ALTURA, BRANCO, CINZA, AMARELO, VERDE, VERMELHO,
@@ -21,6 +21,7 @@ class Tela:
         self.app = app
         self.fase = fase or fases.carregar(app.fase_selecionada)
         self.cenario = Cenario(self.fase.tema)
+        self.ar = efeitos.Ar(self.fase.tema)
         self.menu = ui.Menu(list(botoes)) if botoes else None
         self.tempo = 0.0
 
@@ -56,6 +57,7 @@ class Tela:
     def desenhar(self, tela):
         pulso = max(0.0, 1.0 - (self.tempo * 2.0 % 1.0) * 3.0)
         self.cenario.desenhar(tela, self.tempo * 40.0, 0.0, self.tempo, pulso)
+        self.ar.desenhar(tela, self.tempo * 40.0, 0.0, self.tempo)
         ui.escurecer_tela(tela, 130)
         if self.menu is not None:
             self.menu.desenhar(tela)
@@ -101,6 +103,7 @@ class TelaFases(Tela):
     def _selecionar(self, i):
         self.indice = self.app.fase_selecionada = i
         self.cenario = Cenario(self.lista[i].tema)
+        self.ar = efeitos.Ar(self.lista[i].tema)
         audio.tocar("navegar")
 
     def evento(self, ev):

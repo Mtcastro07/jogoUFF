@@ -32,6 +32,9 @@ LINHA_CHAO = 10                # linha do grid onde o chao comeca (y = 10 * TILE
 PASSO_FISICA = 1.0 / 240.0     # a fisica anda em passos fixos de 1/240 s
 
 # ----------------------------------------------------------------- jogador
+LEO_DESENHADO = False          # True: o Leo gerado para o jogo (assets/art/personagens/);
+                               # False: a folha da Ozzbit (male_hero_free/). A arte nova
+                               # fica guardada nos dois casos.
 JOGADOR_TAM = 32               # lado da caixa de colisao (o sprite tem 32 px de largura)
 HITBOX_PERIGO = 0.5            # fracao da caixa que colide com cacos (raspar nao mata)
 COYOTE = 0.08                  # ainda da para pular ate 80 ms depois de sair do chao

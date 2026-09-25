@@ -20,7 +20,7 @@ PROFUNDIDADE = 8      # linhas de bloco solido abaixo do topo do chao
 
 # Colunas: (uma vaga a cada quantos tiles de chao plano, % das vagas que ganham
 # coluna). Nas ilhas elas sao ruinas espacadas, nao uma cerca ao longo da fase.
-COLUNAS = {"ilhas": (12, 55)}
+COLUNAS = {"ilhas": (12, 55), "eclipse": (12, 65)}
 COLUNAS_PADRAO = (6, 100)
 
 # Largura da hitbox de um caco (fracao do tile) conforme o numero de pontas.

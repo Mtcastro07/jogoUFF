@@ -12,9 +12,20 @@ from .config import TILE, JOGADOR_TAM, LARGURA, ALTURA, BRANCO
 
 ANCORA_X = 0.30       # Leo fica a 30% da largura da tela: o olhar vai para a frente
 ANCORA_Y = 0.66       # e o chao a 66% da altura
-POUSO_DURA = 0.08     # quanto tempo o quadro do pe tocando o chao fica na tela
-# nas Ilhas Suspensas o chao e desenhado como ilhas de pedra flutuando (terreno.py)
-TERRENO_FLUTUANTE = {"ilhas"}
+POUSO_DURA = 0.07     # quanto tempo o quadro do pe tocando o chao fica na tela
+ESTICA = 0.10         # quanto dura o esticar do corpo na saida do pulo
+AMASSA = 0.12         # e o amassar no pouso
+# chao desenhado por terreno.py: ilhas de pedra flutuando e a alvenaria da cidadela
+TERRENO_FLUTUANTE = {"ilhas", "eclipse"}
+
+# Mundos com o ambiente trabalhado: colunas recuadas para o fundo, blocos com
+# sombra de contato e cacos sempre apoiados num leito, nunca soltos no ar.
+# (tema -> cor para onde o cenario recua, quanto recua, cores do leito dos cacos)
+AMBIENTE = {
+    "ilhas": ((118, 78, 112), 0.42, ((46, 33, 61), (69, 50, 87), (86, 66, 106))),
+    "eclipse": ((40, 20, 66), 0.40, ((22, 10, 38), (42, 24, 66), (60, 38, 90))),
+}
+AFUNDA_COLUNA = 14    # a base da coluna fica atras da borda do chao: ela esta mais longe
 
 
 class Camera:
@@ -42,6 +53,14 @@ class Camera:
         return int(self.x), int(self.y)
 
 
+def preparar(fase):
+    """Faz de uma vez as contas que olham a fase inteira (terreno, leitos dos cacos)."""
+    if fase.tema.nome in TERRENO_FLUTUANTE:
+        terreno.preparar(fase)
+    if fase.tema.nome in AMBIENTE:
+        _leitos(fase)
+
+
 def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None):
     """
     Desenha tudo que pertence a fase. `pulso` vai de 1 na batida a 0.
@@ -58,14 +77,17 @@ def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None):
 
     # chao: nas ilhas, ilhas de pedra flutuando; nas outras, o chao de sempre
     if tema.nome in TERRENO_FLUTUANTE:
-        terreno.desenhar(tela, fase, cam_x, cam_y, c0, c1)
+        terreno.desenhar(tela, fase, cam_x, cam_y, c0, c1, est.tempo)
     else:
         _desenhar_chao(tela, fase, cam_x, cam_y, c0, c1)
 
+    amb = AMBIENTE.get(tema.nome)
     for tx, ty in fase.blocos:
         if c0 <= tx < c1:
-            tela.blit(arte.bloco(tema.bloco, tema.chao_topo, tema.nome),
-                      (tx * TILE - cam_x, ty * TILE - cam_y))
+            bx, by = tx * TILE - cam_x, ty * TILE - cam_y
+            if amb:
+                _base_do_bloco(tela, fase, tx, ty, bx, by, amb)
+            tela.blit(arte.bloco(tema.bloco, tema.chao_topo, tema.nome), (bx, by))
 
     for k, p in enumerate(fase.pontes):
         if p.x0 <= cam_x + LARGURA and p.x1 >= cam_x:
@@ -74,6 +96,10 @@ def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None):
     # o glitch dos cacos corre solto, FORA da grade: o perigo nunca pode
     # piscar na batida, ou vira uma pista falsa de tempo.
     q = int(est.tempo * 12)
+    if amb:
+        for (a, b, y) in _leitos(fase):
+            if a * TILE < cam_x + LARGURA and b * TILE > cam_x:
+                _desenhar_leito(tela, a, b, y, cam_x, cam_y, amb[2])
     for tx in range(c0, c1):
         for p in fase.col_perigos.get(tx, ()):
             tela.blit(arte.caco(p.quantidade, tema.perigo, q, tema.nome),
@@ -156,7 +182,14 @@ def _desenhar_deco(tela, d, cam_x, cam_y, tema, pulso, tempo):
         # A arte pode ser menor que a caixa: fica de pe no pe da caixa, centrada.
         img = arte.coluna(int(d.w), int(d.h), tema.bloco, tema.chao_topo, pulso > 0.5,
                           tema.nome, d.variante)
-        tela.blit(img, (x + (d.w - img.get_width()) // 2, y + d.h - img.get_height()))
+        amb = AMBIENTE.get(tema.nome)
+        desce = 0
+        if amb:
+            # ruina ao fundo: puxada para a cor do ceu e com o pe atras da borda
+            # do chao, para nao parecer um objeto solido no caminho do jogador
+            img = arte.recuar(img, amb[0], amb[1])
+            desce = AFUNDA_COLUNA
+        tela.blit(img, (x + (d.w - img.get_width()) // 2, y + d.h - img.get_height() + desce))
     else:   # portal
         img = arte.portal(int(d.w), int(d.h), tema.destaque, int(tempo * 8), tema.nome)
         tela.blit(img, (x + (d.w - img.get_width()) // 2, y + d.h - img.get_height()))
@@ -177,9 +210,8 @@ def _desenhar_heroi(tela, fase, est, cam_x, cam_y, espera):
         anim, i = "segura", (batidas * arte.n_quadros("segura") if arte.SEGURA_CORRE
                              else est.tempo * 6)
     elif not est.no_chao:
-        # cada quadro do pulo cobre uma faixa da velocidade vertical
-        k = (est.vy + fase.v_pulo) / (2.0 * fase.v_pulo)     # 0 subindo, 1 caindo
-        anim, i = "pula", arte.quadro_do_pulo(k)
+        # cada quadro do ar cobre uma faixa da velocidade vertical
+        anim, i = arte.quadro_no_ar(est.vy, fase.v_pulo, est.tempo)
     elif arte.TEM_POUSO and est.tempo - est.pouso < POUSO_DURA:
         anim, i = "pouso", 0                     # o pe acabou de tocar o chao
     else:
@@ -196,4 +228,86 @@ def _desenhar_heroi(tela, fase, est, cam_x, cam_y, espera):
         sombra = pygame.Surface((larg, 8), pygame.SRCALPHA)
         pygame.draw.ellipse(sombra, (0, 0, 0, int(120 * (1 - dist * 0.6))), (0, 0, larg, 8))
         tela.blit(sombra, (cx - larg // 2, chao * TILE - cam_y - 4))
-    arte.desenhar_heroi(tela, anim, i, cx, pes)
+    arte.desenhar_heroi(tela, anim, i, cx, pes, _elastico(est, espera))
+
+
+def _elastico(est, espera):
+    """
+    Esticar e amassar: o corpo estica na saida do pulo e amassa no pouso, e
+    volta ao normal em uma fracao de segundo. Em degraus de 5%, para caber
+    no cache de quadros ja escalados.
+    """
+    if espera is not None or est.sustentando:
+        return (1.0, 1.0)
+    t = est.tempo - est.pulo
+    if 0.0 <= t < ESTICA and not est.no_chao:
+        k = 1.0 - t / ESTICA
+        sx, sy = 1.0 - 0.14 * k, 1.0 + 0.16 * k
+    else:
+        t = est.tempo - est.pouso
+        if not (0.0 <= t < AMASSA) or not est.no_chao:
+            return (1.0, 1.0)
+        k = 1.0 - t / AMASSA
+        sx, sy = 1.0 + 0.16 * k, 1.0 - 0.14 * k
+    return (round(sx * 20) / 20, round(sy * 20) / 20)
+
+
+# ---------------------------------------------------------------- ambiente
+_sombras = {}
+
+
+def _sombra(larg, alto, alfa):
+    chave = (larg, alto, alfa)
+    if chave not in _sombras:
+        s = pygame.Surface((larg, alto), pygame.SRCALPHA)
+        pygame.draw.ellipse(s, (0, 0, 0, alfa), (0, 0, larg, alto))
+        _sombras[chave] = s
+    return _sombras[chave]
+
+
+def _base_do_bloco(tela, fase, tx, ty, bx, by, amb):
+    """Sombra de contato e um pouco de cascalho: o bloco esta no chao, nao colado."""
+    chao = fase.chao_col.get(tx)
+    if chao is None or chao != ty + 1:
+        return
+    tela.blit(_sombra(TILE + 16, 10, 120), (bx - 8, by + TILE - 5))
+    escura, media, clara = amb[2]
+    for k, (dx, cor) in enumerate(((-7, media), (-3, clara), (TILE + 2, media), (TILE - 1, escura))):
+        if (tx * 7 + k * 3) % 4 != 0:                       # nem todo bloco tem todas
+            tela.fill(cor, (bx + dx, by + TILE - 4, 4, 4))
+
+
+_cache_leitos = {}
+
+
+def _leitos(fase):
+    """
+    [(tx0, tx1, y)]: faixas de cacos que nao estao em cima de chao nenhum (no
+    fundo de uma fenda, embaixo de uma ponte). Cada faixa ganha um leito de
+    rocha: caco solto no ar e o que mais parece erro no quadro.
+    """
+    if fase.ident not in _cache_leitos:
+        soltos = sorted({(int(p.x // TILE), int((p.y + p.h) // TILE)) for p in fase.perigos
+                         if (int(p.x // TILE), int((p.y + p.h) // TILE)) not in fase.solidos},
+                        key=lambda t: (t[1], t[0]))
+        faixas = []
+        for tx, ty in soltos:
+            if faixas and faixas[-1][2] == ty * TILE and faixas[-1][1] == tx:
+                faixas[-1][1] = tx + 1
+            else:
+                faixas.append([tx, tx + 1, ty * TILE])
+        _cache_leitos[fase.ident] = [tuple(f) for f in faixas]
+    return _cache_leitos[fase.ident]
+
+
+def _desenhar_leito(tela, a, b, y, cam_x, cam_y, cores):
+    """Uma prateleira de rocha sob os cacos: topo reto, fundo irregular."""
+    escura, media, clara = cores
+    x0, x1 = a * TILE - 6, b * TILE + 6
+    sy = y - cam_y
+    for x in range(int(x0), int(x1), 4):
+        fundo = 10 + ((x * 7919) >> 3) % 3 * 4             # 10, 14 ou 18 px de espessura
+        tela.fill(media, (x - cam_x, sy, 4, fundo))
+        tela.fill(escura, (x - cam_x, sy + fundo - 4, 4, 4))
+    tela.fill(clara, (x0 - cam_x, sy, x1 - x0, 2))
+

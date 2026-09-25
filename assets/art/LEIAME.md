@@ -39,7 +39,8 @@ codigo desenha os dois grupos de um jeito diferente.
     o botao. ponte_viva (a nota sustentada) e opaca. ponte_pilar emoldura o vao.
 
 ui/ e uma pasta so, nao uma por fase. A arte crua dela vem de objetos/ui/ do
-gerador. Letreiros de julgamento e logo ficam no tamanho em que foram
+gerador. As molduras (moldura_*.png, trilho.png) vem de "Painel e botao/",
+recortadas no desenho: o codigo estica em 9 fatias, quinas intactas. Letreiros de julgamento e logo ficam no tamanho em que foram
 desenhados: o codigo amplia por fator inteiro (o logo 3x no menu, a medalha 2x
 no resultado). coracao_3f tem celulas de 40x40: cheio, cheio na batida, vazio. Os emblemas das fases sao UI (aparecem
 na carta de selecao, em escala de tela), entao ficam aqui com a fase no nome:
@@ -86,5 +87,31 @@ alinha todas pelo centro da CABECA e pela linha dos pes, para o Leo nao
 deslizar ao trocar de animacao. Escala 1x: a largura dele (33 px) e a da caixa
 de colisao (32 px). Sem pose propria de sustentar a nota, ele corre sobre a
 ponte de luz. Sem nada disso, o jogo volta para a folha da Ozzbit.
+
+O interruptor e LEO_DESENHADO, em jogo/config.py: com False (o valor atual) o
+jogo usa a folha da Ozzbit mesmo com estes arquivos aqui.
 south.png (de frente) nao e usado: o jogo e todo de lado.
+
+## Arte crua
+
+A saida do gerador, com os nomes dele, fica em "objetos 2/" (cenario/, ui/) e
+"Painel e botao/", dentro desta pasta. O jogo NAO le essas pastas: quem le e
+ferramentas/importar_arte.py, que tem a lista "arquivo cru -> nome do
+contrato" e grava as pecas prontas nas pastas acima.
+
+## Ilhas Suspensas
+
+O chao das ilhas nao usa sprite: e desenhado por jogo/terreno.py como ilhas de
+pedra flutuando, na paleta das ilhas com cascata (a (6) e a (7) do gerador),
+com nos de cristal na borda, raizes pendendo e cascatas nas pontas.
+
+## Cidadela do Eclipse
+
+O chao da cidadela tambem e desenhado (terreno.py): alvenaria na paleta das
+muralhas geradas. O fundo troca as colinas por muralhas com ameias
+(cenario.MURALHAS), e as torres e castelos ficam de pe em cima delas.
+
+Nas duas fases, colunas sao cenario: puxadas para a cor do fundo e com o pe
+atras da borda do chao (mundo.AMBIENTE). Cacos que nao estao sobre chao
+ganham um leito de rocha, e blocos ganham sombra de contato.
 

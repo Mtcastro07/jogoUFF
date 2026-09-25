@@ -15,11 +15,11 @@ ha aviso na tela: o jogador comeca quando quiser.
 
 import pygame
 
-from . import arte, mundo, ui
+from . import arte, efeitos, mundo, ui
 from .audio import audio
 from .cenario import Cenario
 from .config import (LARGURA, ALTURA, VIDAS, PASSO_FISICA, BRANCO, CINZA,
-                     AMARELO, VERDE, VERMELHO, COR_JULGAMENTO)
+                     AMARELO, VERDE, VERMELHO, COR_JULGAMENTO, JOGADOR_TAM)
 from .ritmo import Ritmo
 from .save import save
 from .simulacao import Estado, passo, ferir
@@ -33,6 +33,10 @@ class Partida:
         self.app = app
         self.fase = fase
         self.cenario = Cenario(fase.tema)
+        self.ar = efeitos.Ar(fase.tema)
+        mundo.preparar(fase)                 # as contas da fase inteira, antes do 1o quadro
+        # a poeira do pe: a linha do chao do mundo, clareada
+        self.cor_poeira = arte.clarear(fase.tema.chao_topo, 0.3)
         self.menu_pausa = ui.Menu([
             ui.Botao("CONTINUAR", LARGURA // 2 - 220, 330, 440, 60, VERDE),
             ui.Botao("RECOMECAR", LARGURA // 2 - 220, 410, 440, 60, AMARELO),
@@ -51,6 +55,7 @@ class Partida:
         self.apertou = False       # o botao foi apertado desde o ultimo passo
         self.pressionado = False
         self.resultado = None
+        self.poeira = efeitos.Poeira()
         audio.parar_musica()
 
     def sair(self):
@@ -132,6 +137,7 @@ class Partida:
             return
         if self.modo == FIM:
             self.tempo_fim += dt
+            self.poeira.atualizar(dt)
             if self.tempo_fim > 1.4:
                 self.app.mostrar_resultado(self.resultado)
             return
@@ -148,6 +154,7 @@ class Partida:
             self.acumulador -= PASSO_FISICA
             self._passo()
         self.cam.seguir(self.fase, self.est, dt)
+        self.poeira.atualizar(dt)
 
     def _passo(self):
         est, ritmo = self.est, self.ritmo
@@ -157,6 +164,14 @@ class Partida:
 
         if sustentava and not est.sustentando and est.ponte is not None and not est.no_chao:
             audio.tocar("quebra")          # soltou a nota no meio do vao
+
+        # poeira: o pe empurra o chao para tras na saida, e espalha no pouso.
+        # Na ponte de luz nao ha poeira nenhuma.
+        pe_x, pe_y = est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM
+        if est.acao == "pulo":
+            self.poeira.soltar(pe_x, pe_y, self.cor_poeira, 6, 0.6, para_tras=1.0)
+        elif est.pousou and not est.sustentando:
+            self.poeira.soltar(pe_x, pe_y, self.cor_poeira, 9, 1.2)
 
         if est.acao:
             audio.tocar("ponte" if est.acao == "sustentar" else "pulo")
@@ -211,7 +226,9 @@ class Partida:
         espera = self.espera if self.modo == ESPERANDO else None
         # as estrelas piscam desde a largada, sem pular quando a musica entra
         self.cenario.desenhar(tela, cam_x, cam_y, self.espera + self.est.tempo, pulso)
+        self.ar.desenhar(tela, cam_x, cam_y, self.espera + self.est.tempo)
         mundo.desenhar(tela, self.fase, self.est, cam_x, cam_y, pulso, espera)
+        self.poeira.desenhar(tela, cam_x, cam_y)
         self._hud(tela, pulso)
         if self.modo == PAUSADO:
             ui.escurecer_tela(tela, 170)

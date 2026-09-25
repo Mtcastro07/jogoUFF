@@ -40,6 +40,7 @@ class Estado:
         self.dano = None          # "parede", "perigo", "abismo" ou "ritmo"
         self.pousou = False
         self.pouso = -1.0         # instante do ultimo pouso (a arte mostra o pe tocando o chao)
+        self.pulo = -1.0          # instante do ultimo pulo (a arte estica o corpo na saida)
 
 
 def _colunas(x):
@@ -195,6 +196,7 @@ def passo(fase, est, pressionado, apertou, dt=PASSO_FISICA):
         est.coyote = 0.0
         est.buffer = 0.0
         est.acao = "pulo"
+        est.pulo = est.tempo
 
     if est.x >= fase.fim_x:
         est.venceu = True
