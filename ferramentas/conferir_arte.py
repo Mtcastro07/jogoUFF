@@ -111,9 +111,14 @@ CONTRATO = {
         ("emblema_bosque.png", 1, 96, 96, False),
         ("emblema_ilhas.png", 1, 96, 96, False),
         ("emblema_eclipse.png", 1, 96, 96, False),
-        ("painel.png", 1, 48, 48, False),
-        ("botao.png", 1, 48, 48, False),
         ("logo.png", 1, None, None, False),
+        # molduras 9-slice: recortadas no desenho, o codigo estica (ui.moldura)
+        ("moldura_padrao.png", 1, None, None, False),
+        ("moldura_foco.png", 1, None, None, False),
+        ("moldura_bosque.png", 1, None, None, False),
+        ("moldura_ilhas.png", 1, None, None, False),
+        ("moldura_eclipse.png", 1, None, None, False),
+        ("trilho.png", 1, None, None, False),
     ],
     # o personagem vem no formato do gerador e e conferido a parte (PERSONAGEM)
 }
@@ -218,7 +223,10 @@ def main():
                      "falta": "\033[90m -- \033[0m",
                      "erro": "\033[31mERRO\033[0m"}[estado]
             print(f"  [{marca}] {nome:26} {detalhe}")
-    print("\n\033[1massets/art/personagens/\033[0m")
+    sys.path.insert(0, RAIZ)
+    from jogo.config import LEO_DESENHADO
+    print("\n\033[1massets/art/personagens/\033[0m" +
+          ("" if LEO_DESENHADO else "   (desligado em jogo/config.py: o jogo usa a folha da Ozzbit)"))
     for estado, rel, detalhe in conferir_personagem():
         total[estado] += 1
         marca = {"ok": "\033[32m ok \033[0m", "falta": "\033[90m -- \033[0m",

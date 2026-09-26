@@ -19,7 +19,7 @@ from PPlay.sound import Sound, SoundManager
 from .config import DIR_MUSICA, DIR_SFX, VOLUME_MUSICA, VOLUME_SFX
 
 AVISO_NCS = "Music provided by NoCopyrightSounds - ncs.io"
-EFEITOS = ("pulo", "perfeito", "bom", "erro", "ponte", "quebra",
+EFEITOS = ("pulo", "perfeito", "bom", "erro", "quebra",
            "vitoria", "morte", "clique", "navegar")
 
 
@@ -45,14 +45,22 @@ class Trilha:
 
 
 TRILHAS = {
-    # A fase 1 roda na metade do andamento (75 em vez de 150) para o tutorial
-    # ter quase um segundo entre pulos. Como e divisao exata, continua no ritmo.
-    "bosque": Trilha("About You", "Ascence", bpm=150, offset=0.023,
-                     bpm_grade=75, compasso_inicial=9),
-    "ilhas": Trilha("Heroes Tonight (feat. Johnning)", "Janji", bpm=128,
-                    offset=0.651, bpm_grade=128, compasso_inicial=24),
-    "eclipse": Trilha("Nekozilla", "Different Heaven", bpm=128, offset=0.081,
-                      bpm_grade=128, compasso_inicial=20),
+    # O bosque (a fase que ensina) e a faixa mais calma possivel: lo-fi a
+    # 84,105 BPM (medido: a 84 redondo a batida escorrega meio segundo ate o
+    # fim). A fase entra no primeiro compasso: introducao (0-2), A com o
+    # grave (3-18), B na quebra sem grave (19-34), A' com o grave de novo.
+    "bosque": Trilha("Cruising", "Dosi & Aisake", bpm=84.105, offset=2.831,
+                     bpm_grade=84.105, compasso_inicial=0),
+    # As ilhas (110 BPM, a fase media do GDD) entram na subida da introducao
+    # (compasso 8) e vao ate o fim da faixa: A no primeiro drop (compasso 16),
+    # B na quebra (40), A' no segundo drop (48).
+    "ilhas": Trilha("Castle", "Clarx & Harddope", bpm=110, offset=0.530,
+                    bpm_grade=110, compasso_inicial=8),
+    # A cidadela (150 BPM, a final) e sombria e epica: entra na segunda metade
+    # da batida (compasso 24), A no primeiro drop (40), B na quebra (64), A'
+    # no ultimo drop (80) e no fim da faixa.
+    "eclipse": Trilha("Ark", "Ship Wrek & Zookeepers", bpm=150, offset=0.078,
+                      bpm_grade=150, compasso_inicial=24),
 }
 
 

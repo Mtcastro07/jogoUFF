@@ -6,9 +6,10 @@ jogador age, medimos a distancia entre o toque e a marca mais proxima:
 
     |dt| <= JANELA_PERFEITO * batida  ->  PERFEITO   50 pontos
     |dt| <= JANELA_BOM * batida       ->  BOM        25 pontos
-    janela passou sem toque           ->  ERROU      -1 coracao
+    janela passou sem toque           ->  ERROU       0 pontos
 
-Uma marca so e julgada uma vez. Tocar fora da partitura nao pune.
+Uma marca so e julgada uma vez. Tocar fora da partitura nao pune, e errar o
+tempo tambem nao tira coracao: coracao so se perde batendo em alguma coisa.
 """
 
 from .config import (JANELA_PERFEITO, JANELA_BOM, PONTOS_PERFEITO, PONTOS_BOM,

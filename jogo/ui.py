@@ -34,19 +34,23 @@ def fonte(tam):
     return f
 
 
-def texto(s, tam, cor=BRANCO):
-    chave = (s, tam, cor)
+def texto(s, tam, cor=BRANCO, contorno=None):
+    chave = (s, tam, cor, contorno)
     surf = _textos.get(chave)
     if surf is None:
         if len(_textos) > 2000:
             _textos.clear()
-        surf = _textos[chave] = fonte(tam).render(s, False, cor)
+        surf = fonte(tam).render(s, False, cor)
+        if contorno is not None:
+            # o contorno faz o texto do HUD ler em cima de qualquer ceu
+            surf = arte.contornar(surf.convert_alpha(), contorno, max(2, tam // 16))
+        _textos[chave] = surf
     return surf
 
 
-def desenhar_texto(tela, s, tam, x, y, cor=BRANCO, alinhar="centro"):
+def desenhar_texto(tela, s, tam, x, y, cor=BRANCO, alinhar="centro", contorno=None):
     """Desenha `s` com o centro vertical em `y`; `alinhar` diz o que fica em `x`."""
-    surf = texto(s, tam, cor)
+    surf = texto(s, tam, cor, contorno)
     if alinhar == "centro":
         x -= surf.get_width() // 2
     elif alinhar == "direita":
@@ -143,22 +147,36 @@ def escurecer_tela(tela, alpha):
     tela.blit(s, (0, 0))
 
 
+def suave(x):
+    """0..1 -> 0..1 com entrada e saida macias (para animar posicoes)."""
+    x = max(0.0, min(1.0, x))
+    return x * x * (3.0 - 2.0 * x)
+
+
 class Botao:
     def __init__(self, rotulo, x, y, w=440, h=64, cor=AZUL):
         self.rotulo = rotulo
         self.rect = pygame.Rect(int(x), int(y), int(w), int(h))
         self.cor = cor
+        self.foco = 0.0           # 0..1: o foco cresce e some aos poucos, sem estalo
 
     def desenhar(self, tela, focado):
-        r = self.rect.inflate(16, 8) if focado else self.rect
-        if not moldura(tela, "foco" if focado else "padrao", r.x, r.y, r.w, r.h):
-            painel(tela, r.x, r.y, r.w, r.h, arte.escurecer(self.cor, 0.85) if focado else PAINEL,
-                   self.cor if focado else CINZA)
-        if focado:
-            # a barrinha na cor da acao (verde segue, vermelho sai), por dentro da borda
-            pygame.draw.rect(tela, self.cor, (r.x + 16, r.y + 14, 6, r.h - 28))
-        desenhar_texto(tela, self.rotulo, 24, r.centerx + (8 if focado else 0),
-                       r.centery, BRANCO if focado else CINZA)
+        self.foco += ((1.0 if focado else 0.0) - self.foco) * 0.3
+        if abs(self.foco - round(self.foco)) < 0.01:
+            self.foco = float(round(self.foco))
+        k = self.foco
+        r = self.rect.inflate(int(16 * k), int(8 * k))
+        realce = k > 0.5
+        if not moldura(tela, "foco" if realce else "padrao", r.x, r.y, r.w, r.h):
+            painel(tela, r.x, r.y, r.w, r.h, arte.escurecer(self.cor, 0.85) if realce else PAINEL,
+                   self.cor if realce else CINZA)
+        if k > 0.05:
+            # a barrinha na cor da acao (verde segue, vermelho sai), por dentro
+            # da borda; ela cresce do meio junto com o foco
+            alto = int((r.h - 28) * k)
+            pygame.draw.rect(tela, self.cor, (r.x + 16, r.centery - alto // 2, 6, alto))
+        desenhar_texto(tela, self.rotulo, 24, r.centerx + int(8 * k), r.centery,
+                       BRANCO if realce else CINZA)
 
 
 class Menu:

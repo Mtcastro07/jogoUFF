@@ -1,13 +1,15 @@
 """
 As telas fora da partida: menu principal, selecao de fase, resultado e fim
 de jogo. Todas desenham o cenario da fase escolhida rolando devagar ao fundo.
+Sem animacoes de menu (o GDD): a troca de uma tela para outra e que e suave
+(jogo/transicao.py).
 """
 
 import math
 
 import pygame
 
-from . import arte, fases, ui
+from . import arte, efeitos, fases, ui
 from .audio import audio
 from .cenario import Cenario, ceu
 from .config import (LARGURA, ALTURA, BRANCO, CINZA, AMARELO, VERDE, VERMELHO,
@@ -21,6 +23,7 @@ class Tela:
         self.app = app
         self.fase = fase or fases.carregar(app.fase_selecionada)
         self.cenario = Cenario(self.fase.tema)
+        self.ar = efeitos.Ar(self.fase.tema)
         self.menu = ui.Menu(list(botoes)) if botoes else None
         self.tempo = 0.0
 
@@ -53,12 +56,20 @@ class Tela:
     def atualizar(self, dt):
         self.tempo += dt
 
-    def desenhar(self, tela):
+    def _fundo(self, tela, cenario, ar):
         pulso = max(0.0, 1.0 - (self.tempo * 2.0 % 1.0) * 3.0)
-        self.cenario.desenhar(tela, self.tempo * 40.0, 0.0, self.tempo, pulso)
+        cenario.desenhar(tela, self.tempo * 40.0, 0.0, self.tempo, pulso)
+        ar.desenhar(tela, self.tempo * 40.0, 0.0, self.tempo)
+
+    def desenhar(self, tela):
+        self._fundo(tela, self.cenario, self.ar)
         ui.escurecer_tela(tela, 130)
         if self.menu is not None:
             self.menu.desenhar(tela)
+
+    def titulo(self, tela, s, tam, y, cor):
+        """Um titulo centrado na altura `y`."""
+        ui.desenhar_texto(tela, s, tam, LARGURA // 2, y, cor)
 
 
 # ------------------------------------------------------------------- menu
@@ -72,7 +83,7 @@ class TelaMenu(Tela):
         if rotulo == "JOGAR":
             self.app.ir_para_fases()
         else:
-            self.app.encerrar()
+            self.app.sair()
 
     def desenhar(self, tela):
         super().desenhar(tela)
@@ -88,10 +99,14 @@ class TelaMenu(Tela):
 class TelaFases(Tela):
     LARG, ALT, VAO = 360, 420, 40
 
+    TROCA_FUNDO = 0.35        # segundos do cenario de uma fase se desfazendo no da outra
+
     def __init__(self, app):
         super().__init__(app)
         self.lista = fases.todas()
         self.indice = app.fase_selecionada
+        self.foco = [1.0 if i == self.indice else 0.0 for i in range(len(self.lista))]
+        self.antigo = None        # (cenario, ar, instante) do mundo que esta saindo
 
     def _rect(self, i):
         n = len(self.lista)
@@ -100,7 +115,9 @@ class TelaFases(Tela):
 
     def _selecionar(self, i):
         self.indice = self.app.fase_selecionada = i
+        self.antigo = (self.cenario, self.ar, self.tempo)
         self.cenario = Cenario(self.lista[i].tema)
+        self.ar = efeitos.Ar(self.lista[i].tema)
         audio.tocar("navegar")
 
     def evento(self, ev):
@@ -126,17 +143,30 @@ class TelaFases(Tela):
                         self._selecionar(i)
 
     def desenhar(self, tela):
-        super().desenhar(tela)
-        ui.desenhar_texto(tela, "ESCOLHA A FASE", 48, LARGURA // 2, 100, BRANCO)
-        ui.desenhar_texto(tela, "SETAS ESCOLHEM  -  ENTER JOGA  -  ESC VOLTA", 16,
-                          LARGURA // 2, ALTURA - 50, CINZA)
+        self._fundo(tela, self.cenario, self.ar)
+        if self.antigo is not None:
+            # o mundo de antes se desfaz por cima do novo
+            cenario, ar, t0 = self.antigo
+            k = (self.tempo - t0) / self.TROCA_FUNDO
+            if k >= 1.0:
+                self.antigo = None
+            else:
+                camada = _camada_opaca()
+                self._fundo(camada, cenario, ar)
+                camada.set_alpha(int(255 * (1.0 - ui.suave(k))))
+                tela.blit(camada, (0, 0))
+        ui.escurecer_tela(tela, 130)
+        self.titulo(tela, "ESCOLHA A FASE", 48, 100, BRANCO)
+        self.titulo(tela, "SETAS ESCOLHEM  -  ENTER JOGA  -  ESC VOLTA", 16, ALTURA - 50, CINZA)
         for i, f in enumerate(self.lista):
-            self._carta(tela, self._rect(i), f, i == self.indice)
+            sel = i == self.indice
+            self.foco[i] += ((1.0 if sel else 0.0) - self.foco[i]) * 0.25
+            self._carta(tela, self._rect(i), f, sel, self.foco[i])
 
-    def _carta(self, tela, r, f, sel):
+    def _carta(self, tela, r, f, sel, foco):
         cor = COR_DIFICULDADE[f.dificuldade]
-        if sel:
-            r = r.inflate(20, 20)
+        # a escolhida cresce aos poucos (e a que perdeu o foco encolhe)
+        r = r.inflate(int(20 * foco), int(20 * foco))
         # cada carta na moldura do seu mundo; a escolhida cresce e fica opaca
         if not ui.moldura(tela, f.cancao, r.x, r.y, r.w, r.h, 255 if sel else 200):
             ui.painel(tela, r.x, r.y, r.w, r.h, borda=cor if sel else CINZA, alpha=235 if sel else 200)
@@ -171,6 +201,16 @@ class TelaFases(Tela):
         ui.desenhar_texto_ajustado(tela, f.trilha.artista, 16, cx, r.y + 388, r.w - 30, CINZA)
 
 
+_opacas = []
+
+
+def _camada_opaca():
+    """Uma superficie do tamanho da tela (sem canal alfa), reaproveitada."""
+    if not _opacas:
+        _opacas.append(pygame.Surface((LARGURA, ALTURA)).convert())
+    return _opacas[0]
+
+
 # -------------------------------------------------------------- resultado
 class TelaResultado(Tela):
     def __init__(self, app, dados):
@@ -196,9 +236,8 @@ class TelaResultado(Tela):
         super().desenhar(tela)
         d = self.dados
         cor = VERDE if d["completou"] else AMARELO
-        ui.desenhar_texto(tela, "FASE COMPLETA" if d["completou"] else "RESULTADO", 52,
-                          LARGURA // 2, 56, cor)
-        ui.desenhar_texto(tela, self.fase.nome, 22, LARGURA // 2, 102, CINZA)
+        self.titulo(tela, "FASE COMPLETA" if d["completou"] else "RESULTADO", 52, 56, cor)
+        self.titulo(tela, self.fase.nome, 22, 102, CINZA)
 
         x, y, w, h = (LARGURA - 900) // 2, 136, 900, 360
         if not ui.moldura(tela, self.fase.cancao, x, y, w, h):

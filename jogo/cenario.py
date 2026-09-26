@@ -70,6 +70,15 @@ MAR_DE_NUVENS = {
               (0.93, 0.13, 6, 14, (222, 160, 156), (192, 128, 138))),
 }
 
+# Onde as outras fases tem colinas, a cidadela tem MURALHAS com ameias: uma
+# por camada, e as torres e castelos gerados ficam de pe em cima delas. A
+# muralha de perto fica ACIMA do chao de jogo -- entre as duas aparece a face
+# da muralha, e o castelo nao parece plantado no caminho do jogador.
+# camada -> (altura do topo da muralha, fracao de H; cor da janela acesa)
+MURALHAS = {
+    "eclipse": {"longe": (0.50, (96, 62, 50)), "perto": (0.575, (150, 92, 58))},
+}
+
 _ceus = {}
 
 
@@ -189,12 +198,27 @@ class Cenario:
                 fica.append((u, i, espelhada, altitude))
             self.slots[prefixo] = fica
 
-    def desenhar(self, tela, cam_x, cam_y, tempo, pulso):
-        """`pulso` vai de 1 (na batida) a 0 (entre batidas)."""
+    def desenhar(self, tela, cam_x, cam_y, tempo, pulso, simples=False):
+        """
+        `pulso` vai de 1 (na batida) a 0 (entre batidas). `simples`: a versao
+        alpha -- um fundo PARADO: o ceu, o astro e os morros lisos, sem nada
+        se mexer (nem acompanhando a camera).
+        """
         tema, b = self.tema, self.buf
         cx = cam_x / ESCALA
         dy = -cam_y / ESCALA * 0.08
         b.blit(ceu(tema), (0, 0))
+        if simples:
+            sx, sy = int(W * 0.74), int(H * 0.22)
+            if self.astro is not None:
+                b.blit(self.astro[0], (sx - self.astro[0].get_width() // 2,
+                                       sy - self.astro[0].get_height() // 2))
+            else:
+                pygame.draw.circle(b, tema.sol, (sx, sy), 12)
+            self._colinas(b, 0.0, H * 0.52, 28, 0.9, arte.escurecer(tema.montanha, 0.35))
+            self._colinas(b, 0.0, H * 0.64, 18, 1.7, tema.montanha)
+            tela.blit(pygame.transform.scale(b, (LARGURA, ALTURA)), (0, 0))
+            return
 
         if tema.nome != "ilhas":
             cor = arte.clarear(tema.ceu, 0.7)
@@ -221,7 +245,16 @@ class Cenario:
 
         longe = (cx * 0.12, H * 0.52 + dy * 2, 28, 0.9)
         perto = (cx * 0.25, H * 0.64 + dy * 3, 18, 1.7)
-        if self.mar:
+        muralhas = MURALHAS.get(tema.nome)
+        if muralhas:
+            # cidadela: muralha distante, suas torres, muralha de perto, seus castelos
+            for prefixo, parallax, k_dy, cor in (("longe", 0.12, 2, arte.escurecer(tema.montanha, 0.35)),
+                                                 ("perto", 0.25, 3, tema.montanha)):
+                frac, janela = muralhas[prefixo]
+                topo = int(H * frac + dy * k_dy)
+                self._muralha(b, cx * parallax, topo, cor, janela)
+                self._apoiar(b, prefixo, cx * parallax, topo, 0, 0)
+        elif self.mar:
             # ilhas: as distantes, o mar de nuvens la embaixo, e as proximas
             self._apoiar(b, "longe", *longe)
             for camada, bolhas in self.mar:
@@ -257,6 +290,20 @@ class Cenario:
                 continue
             y = _altura(x + desloc, base, amp, freq) if amp else base
             b.blit(img, (int(x), int(y) - img.get_height() + afundar))
+
+    @staticmethod
+    def _muralha(b, desloc, topo, cor, janela):
+        """Paredao ate o pe da tela, com ameias no topo e umas janelas acesas."""
+        b.fill(cor, (0, topo, W, H - topo))
+        d = int(desloc)
+        for x in range(-(d % 10), W, 10):
+            b.fill(cor, (x, topo - 4, 6, 4))                      # as ameias
+        luz = arte.escurecer(cor, 0.45)
+        b.fill(luz, (0, topo + 2, W, 1))                          # a sombra do parapeito
+        for x in range(-(d % 14), W, 14):
+            u = (x + d) // 14
+            if (u * 2654435761 >> 9) % 7 == 0:                     # poucas janelas acesas
+                b.fill(janela, (x + 3, topo + 7 + (u % 3) * 5, 1, 2))
 
     @staticmethod
     def _mar(b, camada, bolhas, cx, dy):
