@@ -28,9 +28,6 @@ COMO JOGAR
     depois dele nao ha guias -- o cenario e a musica dizem a hora. Nas
     ilhas, os portais mudam a velocidade da corrida.
 
-    A fase 1 esta, temporariamente, desenhada como a VERSAO ALPHA do jogo
-    (so formas simples, sem animacao): config.ALPHA.
-
     O mundo acelera junto com a musica: 84 BPM no bosque, 110 nas ilhas e
     150 na cidadela -- o pulo dura sempre uma batida.
     ESC pausa      R recomeca      F11 tela cheia / janela 

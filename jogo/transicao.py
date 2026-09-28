@@ -38,10 +38,17 @@ class Transicao:
         return self.estado == COBRINDO
 
     def iniciar(self, acao, cor=None):
-        """Escurece, roda `acao()` e clareia. False se ja ha uma em curso."""
-        if self.ativa:
+        """
+        Escurece, roda `acao()` e clareia. False se a tela ja esta escurecendo
+        (um segundo clique). Se ela ainda esta CLAREANDO, volta a escurecer de
+        onde esta: senao um ENTER logo depois de uma troca de tela (a PROXIMA
+        FASE no resultado, por exemplo) tocava o clique e nao fazia nada.
+        """
+        if self.estado == COBRINDO:
             return False
-        self.estado, self.t, self.acao = COBRINDO, 0.0, acao
+        # a curva e simetrica: escurecer a partir de 1 - t continua do mesmo veu
+        t = 1.0 - self.t if self.estado == REVELANDO else 0.0
+        self.estado, self.t, self.acao = COBRINDO, t, acao
         return True
 
     def revelar(self, cor=None):

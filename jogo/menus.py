@@ -13,7 +13,7 @@ from . import arte, efeitos, fases, ui
 from .audio import audio
 from .cenario import Cenario, ceu
 from .config import (LARGURA, ALTURA, BRANCO, CINZA, AMARELO, VERDE, VERMELHO,
-                     AZUL, COR_DIFICULDADE, COR_NOTA)
+                     AZUL, COR_DIFICULDADE, COR_NOTA, CONTORNO)
 
 
 class Tela:
@@ -68,8 +68,9 @@ class Tela:
             self.menu.desenhar(tela)
 
     def titulo(self, tela, s, tam, y, cor):
-        """Um titulo centrado na altura `y`."""
-        ui.desenhar_texto(tela, s, tam, LARGURA // 2, y, cor)
+        """Um titulo centrado na altura `y`, com o contorno do HUD: o astro do fundo
+        passa por tras dos titulos, e sem contorno uma letra sumia em cima dele."""
+        ui.desenhar_texto(tela, s, tam, LARGURA // 2, y, cor, contorno=CONTORNO)
 
 
 # ------------------------------------------------------------------- menu
@@ -106,19 +107,50 @@ class TelaFases(Tela):
         self.lista = fases.todas()
         self.indice = app.fase_selecionada
         self.foco = [1.0 if i == self.indice else 0.0 for i in range(len(self.lista))]
-        self.antigo = None        # (cenario, ar, instante) do mundo que esta saindo
+        self.saindo = None        # (foto do fundo de antes da troca, instante da troca)
+        # a carta embaixo do mouse. So ENTRAR numa carta a escolhe: o mouse
+        # tremendo dentro dela nao desfaz o que as setas escolheram, e a carta
+        # onde ele ja estava quando a tela abriu (o JOGAR do menu fica em cima
+        # da do meio) nao se escolhe sozinha
+        self.sob_mouse = self._carta_em(app.mouse())
 
     def _rect(self, i):
         n = len(self.lista)
         x0 = (LARGURA - n * self.LARG - (n - 1) * self.VAO) // 2
         return pygame.Rect(x0 + i * (self.LARG + self.VAO), 190, self.LARG, self.ALT)
 
+    def _carta_em(self, pos):
+        """O indice da carta embaixo de `pos`, ou None."""
+        for i in range(len(self.lista)):
+            if self._rect(i).collidepoint(pos):
+                return i
+        return None
+
     def _selecionar(self, i):
         self.indice = self.app.fase_selecionada = i
-        self.antigo = (self.cenario, self.ar, self.tempo)
+        # o fundo como esta na tela -- ate no meio de outra troca -- vira uma
+        # foto que se desfaz por cima do mundo novo: passando o mouse pelas
+        # cartas, uma troca atras da outra, nenhum mundo some de repente
+        a, b = _camadas_opacas()
+        foto = b if self.saindo is not None and self.saindo[0] is a else a
+        self._fundo(foto, self.cenario, self.ar)
+        self._desfazer(foto)
+        self.saindo = (foto, self.tempo)
         self.cenario = Cenario(self.lista[i].tema)
         self.ar = efeitos.Ar(self.lista[i].tema)
         audio.tocar("navegar")
+
+    def _desfazer(self, tela):
+        """Por cima do fundo, a foto do de antes da troca, cada vez mais apagada."""
+        if self.saindo is None:
+            return
+        foto, t0 = self.saindo
+        k = (self.tempo - t0) / self.TROCA_FUNDO
+        if k >= 1.0:
+            self.saindo = None
+            return
+        foto.set_alpha(int(255 * (1.0 - ui.suave(k))))
+        tela.blit(foto, (0, 0))
 
     def evento(self, ev):
         app = self.app
@@ -133,28 +165,24 @@ class TelaFases(Tela):
             elif ev.key == pygame.K_ESCAPE:
                 audio.tocar("clique")
                 app.ir_para_menu()
+        elif ev.type == pygame.MOUSEMOTION:
+            # passar o mouse por cima de uma carta a escolhe, com a mesma troca das setas
+            i = self._carta_em(app.mouse())
+            if i != self.sob_mouse:
+                self.sob_mouse = i
+                if i is not None and i != self.indice:
+                    self._selecionar(i)
         elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-            for i in range(len(self.lista)):
-                if self._rect(i).collidepoint(app.mouse()):
-                    if i == self.indice:
-                        audio.tocar("clique")
-                        app.ir_para_jogo(i)
-                    else:
-                        self._selecionar(i)
+            i = self._carta_em(app.mouse())
+            if i == self.indice:
+                audio.tocar("clique")
+                app.ir_para_jogo(i)
+            elif i is not None:
+                self._selecionar(i)
 
     def desenhar(self, tela):
         self._fundo(tela, self.cenario, self.ar)
-        if self.antigo is not None:
-            # o mundo de antes se desfaz por cima do novo
-            cenario, ar, t0 = self.antigo
-            k = (self.tempo - t0) / self.TROCA_FUNDO
-            if k >= 1.0:
-                self.antigo = None
-            else:
-                camada = _camada_opaca()
-                self._fundo(camada, cenario, ar)
-                camada.set_alpha(int(255 * (1.0 - ui.suave(k))))
-                tela.blit(camada, (0, 0))
+        self._desfazer(tela)
         ui.escurecer_tela(tela, 130)
         self.titulo(tela, "ESCOLHA A FASE", 48, 100, BRANCO)
         self.titulo(tela, "SETAS ESCOLHEM  -  ENTER JOGA  -  ESC VOLTA", 16, ALTURA - 50, CINZA)
@@ -204,11 +232,11 @@ class TelaFases(Tela):
 _opacas = []
 
 
-def _camada_opaca():
-    """Uma superficie do tamanho da tela (sem canal alfa), reaproveitada."""
+def _camadas_opacas():
+    """Duas superficies do tamanho da tela (sem canal alfa), reaproveitadas."""
     if not _opacas:
-        _opacas.append(pygame.Surface((LARGURA, ALTURA)).convert())
-    return _opacas[0]
+        _opacas.extend(pygame.Surface((LARGURA, ALTURA)).convert() for _ in range(2))
+    return _opacas
 
 
 # -------------------------------------------------------------- resultado
@@ -292,7 +320,8 @@ class TelaGameOver(Tela):
         super().desenhar(tela)
         d = self.dados
         tremor = math.sin(self.tempo * 30) * max(0.0, 1.0 - self.tempo * 2) * 8
-        ui.desenhar_texto(tela, "FIM DE JOGO", 80, LARGURA // 2 + tremor, 170, VERMELHO)
+        ui.desenhar_texto(tela, "FIM DE JOGO", 80, LARGURA // 2 + tremor, 170, VERMELHO,
+                          contorno=CONTORNO)
         x, y, w = (LARGURA - 800) // 2, 260, 800
         if not ui.moldura(tela, self.fase.cancao, x, y, w, 120):
             ui.painel(tela, x, y, w, 120, borda=VERMELHO)

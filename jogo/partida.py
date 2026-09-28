@@ -29,7 +29,7 @@ from .audio import audio
 from .cenario import Cenario
 from .config import (LARGURA, ALTURA, VIDAS, PASSO_FISICA, BRANCO, CINZA,
                      AMARELO, VERDE, VERMELHO, COR_JULGAMENTO, COR_DIFICULDADE, JOGADOR_TAM,
-                     TILE)
+                     TILE, CONTORNO)
 from .ritmo import Ritmo
 from .save import save
 from .simulacao import Estado, passo
@@ -37,7 +37,7 @@ from .simulacao import Estado, passo
 ESPERANDO, JOGANDO, PAUSADO, FIM, RETOMANDO = 0, 1, 2, 3, 4
 CONTAGEM = 3                    # batidas da contagem antes de a musica voltar da pausa
 TEXTO_JULGAMENTO = {"perfeito": "PERFEITO!", "bom": "BOM!", "erro": "ERROU..."}
-CONTORNO_HUD = (14, 10, 28)     # contorno do texto do HUD: le em cima de qualquer ceu
+CONTORNO_HUD = CONTORNO         # contorno do texto do HUD: le em cima de qualquer ceu
 
 
 class Partida:

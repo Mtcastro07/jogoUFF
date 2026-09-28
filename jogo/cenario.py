@@ -79,7 +79,22 @@ MURALHAS = {
     "eclipse": {"longe": (0.50, (96, 62, 50)), "perto": (0.575, (150, 92, 58))},
 }
 
+# O astro anda devagar para a esquerda com a camera (parallax de 1%). Numa fase
+# longa isso o levaria para fora da tela -- a cidadela tem mais de 110 mil px --
+# entao, depois de DERIVA_LIVRE px de caminho, ele desacelera suave e para antes
+# de chegar na borda (DERIVA_MAX). O bosque inteiro cabe no trecho livre.
+DERIVA_LIVRE, DERIVA_MAX = 150.0, 190.0
+
 _ceus = {}
+
+
+def _deriva_astro(cx):
+    """Quantos px do fundo o astro ja andou para a esquerda com a camera em `cx`."""
+    d = cx * 0.01
+    if d <= DERIVA_LIVRE:
+        return d
+    folga = DERIVA_MAX - DERIVA_LIVRE
+    return DERIVA_LIVRE + folga * (1.0 - math.exp(-(d - DERIVA_LIVRE) / folga))
 
 
 def ceu(tema):
@@ -184,7 +199,7 @@ class Cenario:
         """
         from .mundo import ANCORA_X
         cx = -LARGURA * ANCORA_X / ESCALA
-        sol_x, sol_y, raio = W * 0.74 - cx * 0.01, H * 0.22, 22
+        sol_x, sol_y, raio = W * 0.74 - _deriva_astro(cx), H * 0.22, 22
         for prefixo, parallax, base in (("longe", 0.12, H * 0.52), ("perto", 0.25, H * 0.64)):
             pecas, desloc = self.pecas[prefixo], cx * parallax
             fica = []
@@ -228,7 +243,7 @@ class Cenario:
                     b.fill(cor, (int(sx), int(y + dy), 1, 1))
 
         # sol / lua, respirando junto com a batida
-        sx = int(W * 0.74 - cx * 0.01) % (W * 3)
+        sx = int(W * 0.74 - _deriva_astro(cx))
         sy = int(H * 0.22 + dy)
         if self.astro is not None:
             # 0 em repouso, 1 estourado na batida, 2 voltando

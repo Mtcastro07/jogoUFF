@@ -32,10 +32,11 @@ LINHA_CHAO = 10                # linha do grid onde o chao comeca (y = 10 * TILE
 PASSO_FISICA = 1.0 / 240.0     # a fisica anda em passos fixos de 1/240 s
 
 # ----------------------------------------------------------------- jogador
-# TEMPORARIO: os mundos desenhados como a VERSAO ALPHA do jogo (jogo/alpha.py):
-# os mesmos sprites, cenario e interface, simplificados e sem animacao -- para
-# gravar o video do alpha. Para voltar a versao final: ALPHA = set().
-ALPHA = {"bosque"}
+# Os mundos desenhados como a VERSAO ALPHA do jogo (jogo/alpha.py): os mesmos
+# sprites, cenario e interface, simplificados e sem animacao -- foi usada para
+# gravar o video do alpha. Vazio: todas as fases na versao final, completas.
+# Para gravar de novo, ponha o nome do mundo aqui (ex.: ALPHA = {"bosque"}).
+ALPHA = set()
 LEO_DESENHADO = False          # True: o Leo gerado para o jogo (assets/art/personagens/);
                                # False: a folha da Ozzbit (male_hero_free/). A arte nova
                                # fica guardada nos dois casos.
@@ -89,6 +90,7 @@ VERMELHO = (255, 86, 112)
 VERDE = (120, 255, 168)
 AZUL = (120, 240, 255)
 ROXO = (200, 160, 255)
+CONTORNO = (14, 10, 28)         # contorno escuro dos textos: le em cima de qualquer ceu
 
 COR_JULGAMENTO = {"perfeito": VERDE, "bom": AMARELO, "erro": VERMELHO}
 COR_DIFICULDADE = {"FACIL": VERDE, "NORMAL": AMARELO, "DIFICIL": VERMELHO}

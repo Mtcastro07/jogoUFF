@@ -6,6 +6,7 @@ cada desenho e feito uma vez e depois so e copiado para a tela.
 
 import os
 import re
+from collections import OrderedDict
 
 import pygame
 
@@ -146,6 +147,26 @@ def _variantes(fase, base):
     return achadas or ([base] if tem_peca(base, fase) else [])
 
 
+# Copias derivadas de uma imagem (recuada, translucida), guardadas por id() da
+# imagem de origem. Cada entrada guarda a PROPRIA origem e confere se e ela: o
+# Python da o id de uma imagem jogada fora a outra nova, e sem a conferencia o
+# cache devolveria a copia da imagem errada (um "+25" aparecendo como "+50").
+# As translucidas sao de textos que o ui.py recria: saem da mais antiga.
+_derivadas = OrderedDict()
+GUARDA_DERIVADAS = 600
+
+
+def _derivada(img, chave, faz):
+    ent = _derivadas.get(chave)
+    if ent is None or ent[0] is not img:
+        ent = _derivadas[chave] = (img, faz())
+        if len(_derivadas) > GUARDA_DERIVADAS:
+            _derivadas.popitem(last=False)
+    else:
+        _derivadas.move_to_end(chave)
+    return ent[1]
+
+
 def recuar(img, cor, k):
     """
     Copia puxada `k` (0..1) na direcao de `cor`, mantendo o alfa: o que e
@@ -156,7 +177,7 @@ def recuar(img, cor, k):
         s.fill((int(255 * (1 - k)),) * 3, special_flags=pygame.BLEND_RGB_MULT)
         s.fill(tuple(int(c * k) for c in cor[:3]), special_flags=pygame.BLEND_RGB_ADD)
         return s
-    return _memo(("recuar", id(img), cor, k), faz)
+    return _derivada(img, ("recuar", id(img), cor, k), faz)
 
 
 def fantasma(img, alfa):
@@ -165,7 +186,7 @@ def fantasma(img, alfa):
         s = img.copy()
         s.set_alpha(alfa)
         return s
-    return _memo(("fantasma", id(img), alfa), faz)
+    return _derivada(img, ("fantasma", id(img), alfa), faz)
 
 
 def carregar():
