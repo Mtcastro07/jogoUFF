@@ -1,6 +1,5 @@
 {
   // O pygame so existe no ambiente virtual do projeto.
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-  "python.terminal.activateEnvironment": true,
-  "cmake.sourceDirectory": "/home/matheus/Documentos/jogoUFF/pycdc"
+  "python.terminal.activateEnvironment": true
 }
