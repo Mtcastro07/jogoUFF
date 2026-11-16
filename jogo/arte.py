@@ -180,6 +180,26 @@ def recuar(img, cor, k):
     return _derivada(img, ("recuar", id(img), cor, k), faz)
 
 
+def aura(img, cor, raio=4):
+    """
+    O clarao em volta de um perigo: a silhueta dele borrada na cor de perigo
+    do mundo, `raio` px maior para cada lado. E o que destaca o caco de
+    qualquer fundo -- roxo sobre a muralha roxa sumia. Desenhar em
+    (x - raio, y - raio), ANTES do caco. Parada: o perigo nunca pulsa.
+    """
+    def faz():
+        w, h = img.get_size()
+        forma = pygame.mask.from_surface(img, 128).to_surface(setcolor=(*cor[:3], 255),
+                                                               unsetcolor=(0, 0, 0, 0))
+        s = pygame.Surface((w + 2 * raio, h + 2 * raio), pygame.SRCALPHA)
+        for d, alfa in ((raio, 46), (raio // 2, 80)):
+            forma.set_alpha(alfa)
+            for dx, dy in ((-d, 0), (d, 0), (0, -d), (0, d), (-d, -d), (d, -d), (-d, d), (d, d)):
+                s.blit(forma, (raio + dx * (0.7 if dx and dy else 1), raio + dy * (0.7 if dx and dy else 1)))
+        return s
+    return _derivada(img, ("aura", id(img), cor, raio), faz)
+
+
 def fantasma(img, alfa):
     """Copia translucida (em cache): o que some aos poucos (letreiros, logo)."""
     def faz():
@@ -376,32 +396,51 @@ QUADROS_GLITCH = 16
 CIANO_GLITCH = (120, 240, 255)
 
 
-def caco(quantidade, cor, i=0, fase=None):
+def _nome_caco(quantidade, variante):
+    return f"caco{quantidade}" + (f"v{variante + 1}" if variante else "")
+
+
+def variantes_caco(quantidade, fase):
+    """
+    Quantos desenhos a fase tem para este caco: caco2.png, caco2v2.png,
+    caco2v3.png... Cada um colide pela PROPRIA silhueta, e todas cabem dentro
+    da silhueta do primeiro -- uma variante nunca deixa a fase mais dificil.
+    """
+    n = 1
+    while fase and _achar(("objetos", "jogo", fase), _nome_caco(quantidade, n))[0]:
+        n += 1
+    return n
+
+
+def caco(quantidade, cor, i=0, fase=None, variante=0):
     """Um tile com 1, 2 ou 3 triangulos pontudos. `i` e o quadro do glitch."""
-    nome = f"caco{quantidade}"
+    nome = _nome_caco(quantidade, variante)
     if tem_peca(nome, fase, so_animada=True):
         return _peca(nome, i, cor, fase)            # a tira animada que ja veio pronta
-    quadros = _memo(("caco_vivo", quantidade, cor, fase),
-                    lambda: _glitch(_facetar(_caco_parado(quantidade, cor, fase))))
+    # o caco pintado para a fase ja vem com volume: so o comum (tingido) e facetado
+    pintado = fase is not None and _achar(("objetos", "jogo", fase), nome)[0] is not None
+    sombra = (lambda img: img) if pintado else _facetar
+    quadros = _memo(("caco_vivo", quantidade, cor, fase, variante),
+                    lambda: _glitch(sombra(_caco_parado(quantidade, cor, fase, variante))))
     return quadros[int(i) % len(quadros)]
 
 
-def perfil_caco(quantidade, cor, fase=None, folga=0):
+def perfil_caco(quantidade, cor, fase=None, folga=0, variante=0):
     """
     [topo do desenho em cada x do tile]: a silhueta do caco desta fase, para a
     colisao -- o caco fere onde ele aparece. O glitch nao muda a silhueta (a
     fatia so escorrega 2 px num quadro), entao vale o desenho parado.
     """
     def faz():
-        img = _caco_parado(quantidade, cor, fase)
+        img = _caco_parado(quantidade, cor, fase, variante)
         w, h = img.get_size()
         return [min(h, next((y for y in range(h) if img.get_at((x, y)).a > 128), h) + folga)
                 for x in range(w)]
-    return _memo(("perfil", quantidade, cor, fase, folga), faz)
+    return _memo(("perfil", quantidade, cor, fase, folga, variante), faz)
 
 
-def _caco_parado(quantidade, cor, fase):
-    pronto = _peca(f"caco{quantidade}", 0, cor, fase)
+def _caco_parado(quantidade, cor, fase, variante=0):
+    pronto = _peca(_nome_caco(quantidade, variante), 0, cor, fase)
     if pronto is not None:
         return pronto
     s = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
@@ -480,9 +519,21 @@ def chao(fase):
     return png("objetos", "jogo", fase, "chao.png")
 
 
-def bloco(cor, cor_borda, fase=None):
+def variantes_bloco(fase):
+    """Quantos desenhos de bloco a fase tem: bloco.png, bloco_v2.png, bloco_v3.png..."""
+    n = 1
+    while fase and _achar(("objetos", "jogo", fase), f"bloco_v{n + 1}")[0]:
+        n += 1
+    return n
+
+
+def bloco(cor, cor_borda, fase=None, variante=0):
     # tingido com a cor da BORDA, a clara: o bloco e solido como o chao, e e o
     # topo claro do chao que diz ao jogador "aqui da para pisar"
+    if variante:
+        pronto = _peca(f"bloco_v{variante + 1}", 0, cor_borda, fase)
+        if pronto is not None:
+            return pronto
     pronto = _peca("bloco", 0, cor_borda, fase)
     if pronto is not None:
         return pronto
@@ -530,6 +581,25 @@ def coluna(w, h, cor, cor_borda, aceso=False, fase=None, variante=0):
         pygame.draw.rect(s, cor_borda, (w // 4, 8, w // 2, h - 8), 2)
         return s
     return _memo(("coluna", w, h, cor, cor_borda), faz)
+
+
+def enfeites(fase):
+    """Os enfeites de mapa que a fase tem (enfeite_1, enfeite_2...): lampioes, tochas, ruinas."""
+    return _variantes(fase, "enfeite")
+
+
+def enfeite(fase, variante, i=0):
+    """Um quadro do enfeite `variante` da fase (os animados sao tiras `_Nf`), ou None."""
+    nomes = enfeites(fase)
+    if not nomes:
+        return None
+    return _peca(nomes[variante % len(nomes)], i, (255, 255, 255), fase)
+
+
+def enfeite_numero(fase, numero, i=0):
+    """Um quadro do enfeite_<numero> da fase (ou None se ele nao existe)."""
+    nome = f"enfeite_{numero}"
+    return _peca(nome, i, (255, 255, 255), fase) if tem_peca(nome, fase) else None
 
 
 def portal(w, h, cor, i=0, fase=None):

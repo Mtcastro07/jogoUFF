@@ -70,6 +70,10 @@ class App:
         self.fase_selecionada = 0
         arte.carregar()
         audio.iniciar()
+        audio.aplicar(save.opcoes)
+        # controle: qualquer um ligado vale; os botoes viram as teclas do jogo
+        pygame.joystick.init()
+        self.controles = {}
         self.tela = menus.TelaMenu(self)
         self.transicao = Transicao()
         self.transicao.revelar(self._cor())         # o jogo abre saindo da onda
@@ -94,6 +98,9 @@ class App:
     def ir_para_menu(self):
         self._trocar(lambda: menus.TelaMenu(self))
 
+    def ir_para_opcoes(self):
+        self._trocar(lambda: menus.TelaOpcoes(self))
+
     def ir_para_fases(self):
         self._trocar(lambda: menus.TelaFases(self))
 
@@ -104,6 +111,39 @@ class App:
     def mostrar_resultado(self, dados):
         tela = menus.TelaResultado if dados["completou"] else menus.TelaGameOver
         self._trocar(lambda: tela(self, dados))
+
+    # -------------------------------------------------------------- controle
+    BOTOES_PULO = (0, 2, 3)        # A, X, Y (no padrao mais comum)
+    BOTOES_VOLTA = (1, 6, 7, 9)    # B, select, start
+
+    def controle_segurado(self):
+        """Algum botao de pulo de algum controle esta apertado?"""
+        try:
+            return any(c.get_button(b) for c in self.controles.values()
+                       for b in self.BOTOES_PULO if b < c.get_numbuttons())
+        except pygame.error:
+            return False
+
+    def _traduzir(self, ev):
+        """Um evento de controle vira a tecla equivalente (os outros passam como vieram)."""
+        tecla = None
+        if ev.type == pygame.JOYDEVICEADDED:
+            c = pygame.joystick.Joystick(ev.device_index)
+            self.controles[c.get_instance_id()] = c
+        elif ev.type == pygame.JOYDEVICEREMOVED:
+            self.controles.pop(ev.instance_id, None)
+        elif ev.type == pygame.JOYBUTTONDOWN:
+            if ev.button in self.BOTOES_PULO:
+                tecla = pygame.K_SPACE
+            elif ev.button in self.BOTOES_VOLTA:
+                tecla = pygame.K_ESCAPE
+        elif ev.type == pygame.JOYHATMOTION:
+            hx, hy = ev.value
+            tecla = (pygame.K_UP if hy > 0 else pygame.K_DOWN if hy < 0 else
+                     pygame.K_RIGHT if hx > 0 else pygame.K_LEFT if hx < 0 else None)
+        if tecla is None:
+            return ev
+        return pygame.event.Event(pygame.KEYDOWN, key=tecla, mod=0, unicode="")
 
     def mouse(self):
         return self.janela.mouse.get_position()
@@ -127,7 +167,7 @@ class App:
             # segundo clique) e a partida fica parada
             if not transicao.cobrindo:
                 for ev in janela.eventos:  # o QUIT ja foi tratado pela PPlay
-                    self.tela.evento(ev)
+                    self.tela.evento(self._traduzir(ev))
             if not (transicao.cobrindo and isinstance(self.tela, Partida)):
                 self.tela.atualizar(dt)
             transicao.atualizar(dt)

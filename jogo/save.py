@@ -8,13 +8,15 @@ from .config import ARQUIVO_SAVE
 VERSAO = 1   # sobe quando o formato muda; um save de versao anterior e descartado
 
 VAZIO = {"melhor": 0.0, "completou": False, "pontos": 0, "nota": "-",
-         "precisao": 0.0}
+         "precisao": 0.0, "ecos": 0}
+OPCOES = {"musica": 10, "sfx": 10, "atraso": 0}     # volumes de 0 a 10; atraso em ms
 ORDEM_NOTAS = {"-": 0, "C": 1, "B": 2, "A": 3, "S": 4}
 
 
 class Save:
     def __init__(self):
         self.recordes = {}
+        self.opcoes = dict(OPCOES)
         self.carregar()
 
     def carregar(self):
@@ -25,12 +27,17 @@ class Save:
             return
         if dados.get("versao") == VERSAO and isinstance(dados.get("recordes"), dict):
             self.recordes = dados["recordes"]
+            if isinstance(dados.get("opcoes"), dict):
+                for k in OPCOES:
+                    if isinstance(dados["opcoes"].get(k), int):
+                        self.opcoes[k] = dados["opcoes"][k]
 
     def salvar(self):
         try:
             tmp = ARQUIVO_SAVE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"versao": VERSAO, "recordes": self.recordes}, f, indent=1)
+                json.dump({"versao": VERSAO, "recordes": self.recordes,
+                           "opcoes": self.opcoes}, f, indent=1)
             os.replace(tmp, ARQUIVO_SAVE)
         except OSError as erro:
             print(f"[save] nao foi possivel gravar: {erro}")
@@ -41,7 +48,7 @@ class Save:
             r.setdefault(k, v)
         return r
 
-    def registrar(self, fase_id, pct, completou, pontos, nota, precisao):
+    def registrar(self, fase_id, pct, completou, pontos, nota, precisao, ecos=0):
         """Guarda o melhor de cada campo (nunca piora um recorde)."""
         r = self.recorde(fase_id)
         r["melhor"] = max(r["melhor"], round(pct, 2))
@@ -51,6 +58,7 @@ class Save:
         if ORDEM_NOTAS.get(nota, 0) > ORDEM_NOTAS.get(r["nota"], 0):
             r["nota"] = nota
         r["completou"] = r["completou"] or completou
+        r["ecos"] = max(r["ecos"], int(ecos))
         self.salvar()
         return r
 

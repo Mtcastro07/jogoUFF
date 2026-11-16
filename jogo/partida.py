@@ -26,7 +26,7 @@ import pygame
 
 from . import alpha, arte, efeitos, mundo, ui
 from .audio import audio
-from .cenario import Cenario
+from .cenario import Cenario, cena
 from .config import (LARGURA, ALTURA, VIDAS, PASSO_FISICA, BRANCO, CINZA,
                      AMARELO, VERDE, VERMELHO, COR_JULGAMENTO, COR_DIFICULDADE, JOGADOR_TAM,
                      TILE, CONTORNO)
@@ -38,6 +38,54 @@ ESPERANDO, JOGANDO, PAUSADO, FIM, RETOMANDO = 0, 1, 2, 3, 4
 CONTAGEM = 3                    # batidas da contagem antes de a musica voltar da pausa
 TEXTO_JULGAMENTO = {"perfeito": "PERFEITO!", "bom": "BOM!", "erro": "ERROU..."}
 CONTORNO_HUD = CONTORNO         # contorno do texto do HUD: le em cima de qualquer ceu
+MARCO_COMBO = 25                # a cada tantos acertos seguidos, a sequencia comemora
+BORDA = 40                      # px da luz que bate nas bordas da tela
+
+
+def _bordas(cor):
+    """
+    As quatro faixas de luz das bordas da tela, em degraus de pixel (nada de
+    degrade liso): fortes rente a borda, sumindo para dentro.
+    """
+    passos = 4
+    def faixa(w, h, horizontal, inverte):
+        s = pygame.Surface((w, h), pygame.SRCALPHA)
+        for i in range(passos):
+            alfa = int(255 * (1.0 - i / passos) ** 2)
+            d = i * BORDA // passos
+            e = BORDA // passos
+            if horizontal:
+                y = h - d - e if inverte else d
+                s.fill((*cor, alfa), (0, y, w, e))
+            else:
+                x = w - d - e if inverte else d
+                s.fill((*cor, alfa), (x, 0, e, h))
+        return s
+    return (faixa(LARGURA, BORDA, True, False), faixa(LARGURA, BORDA, True, True),
+            faixa(BORDA, ALTURA - 2 * BORDA, False, False), faixa(BORDA, ALTURA - 2 * BORDA, False, True))
+
+
+RASTRO_COMBO = 10      # a partir desta sequencia o Leo deixa um rastro
+_vinhetas = []
+
+
+def _vinheta():
+    """Os cantos da tela escurecem de leve: o olho fica no meio, onde esta o jogo."""
+    if not _vinhetas:
+        w, h = LARGURA // 8, ALTURA // 8
+        s = pygame.Surface((w, h), pygame.SRCALPHA)
+        for y in range(h):
+            for x in range(w):
+                d = math.hypot((x - w / 2) / (w / 2), (y - h / 2) / (h / 2))
+                s.set_at((x, y), (6, 4, 16, int(110 * max(0.0, min(1.0, (d - 0.72) / 0.7)) ** 1.4)))
+        _vinhetas.append(pygame.transform.smoothscale(s, (LARGURA, ALTURA)))
+    return _vinhetas[0]
+
+
+PONTOS_ECO = 10                 # cada eco pego no ar
+# ate onde o corpo do Leo alcanca um eco (px, para os lados e na altura): cabe o
+# toque adiantado ou atrasado, e nao cabe o arco errado (o alto passa longe do baixo)
+ALCANCE_ECO = (22, 34)
 
 
 class Partida:
@@ -46,6 +94,8 @@ class Partida:
         self.fase = fase
         self.cenario = Cenario(fase.tema)
         self.ar = efeitos.Ar(fase.tema)
+        self.ar_atos = {ato: efeitos.Ar(fase.tema, cfg)
+                        for ato, cfg in efeitos.AR_DO_ATO.get(fase.tema.nome, {}).items()}
         self.vento = efeitos.Vento()
         self.cor_vento = arte.clarear(fase.tema.ceu, 0.55)
         mundo.preparar(fase)                 # as contas da fase inteira, antes do 1o quadro
@@ -53,6 +103,8 @@ class Partida:
             ui.imagem(f"julgamento_{tipo}.png", 1.25)
         # a poeira do pe: a linha do chao do mundo, clareada
         self.cor_poeira = arte.clarear(fase.tema.chao_topo, 0.3)
+        self.luz_batida = _bordas(fase.tema.destaque)   # a batida acende as bordas
+        self.luz_dano = _bordas(VERMELHO)               # e a pancada as tinge de vermelho
         self.menu_pausa = ui.Menu([
             ui.Botao("CONTINUAR", LARGURA // 2 - 220, 330, 440, 60, VERDE),
             ui.Botao("RECOMECAR", LARGURA // 2 - 220, 410, 440, 60, AMARELO),
@@ -79,7 +131,18 @@ class Partida:
         self.resultado = None
         self.poeira = efeitos.Poeira()
         self.faiscas = efeitos.Faiscas()
+        self.ecos = efeitos.Ecos()
+        self.pegos = set()         # indices dos ecos (fase.brilhos) ja pegos
+        self.eco_em = None         # instante do ultimo eco pego (a conta do HUD salta)
+        self.brilho_i = 0          # o primeiro eco que ainda nao ficou para tras
+        self.rastro = []           # [(quadro, x, y)] do Leo, com a sequencia alta
+        self.conta_rastro = 0
         self.morte = None          # a animacao da morte (Leo virando ruido)
+        self.pontos_tela = 0.0     # a pontuacao do HUD conta ate a de verdade
+        self.dano_em = None        # (instante, qual coracao) da ultima pancada
+        self.marco = None          # (instante, sequencia) do ultimo marco de combo
+        # o melhor progresso ate esta partida: uma marquinha no trilho do rodape
+        self.melhor_antes = save.recorde(self.fase.ident)["melhor"]
         audio.parar_musica()
 
     def sair(self):
@@ -172,7 +235,8 @@ class Partida:
     def _botao_segurado(self):
         t = self.app.teclado
         return (t.key_pressed("SPACE") or t.key_pressed("UP") or t.key_pressed("W")
-                or pygame.mouse.get_pressed()[0])
+                or pygame.mouse.get_pressed()[0]
+                or getattr(self.app, "controle_segurado", bool)())
 
     # -------------------------------------------------------------- atualizar
     def atualizar(self, dt):
@@ -220,6 +284,15 @@ class Partida:
         self.cam.seguir(self.fase, self.est, dt)
         self.poeira.atualizar(dt)
         self.faiscas.atualizar(dt)
+        self.ecos.atualizar(dt)
+        # com a sequencia alta o Leo deixa um rastro: um quadro guardado a cada 3
+        self.conta_rastro += 1
+        if self.ritmo.combo >= RASTRO_COMBO and not self.fase.alpha:
+            if self.conta_rastro % 3 == 0:
+                self.rastro.append(mundo.sprite_heroi(self.fase, self.est, self.y_desenho))
+                del self.rastro[:-3]
+        elif self.rastro and self.conta_rastro % 3 == 0:
+            self.rastro.pop(0)                              # perdeu a sequencia: o rastro some
         # o Leo e desenhado onde a fisica diz; so um salto grande de uma vez (o
         # resgate depois de bater numa parede) e percorrido em uns quadros
         d = self.est.y - self.y_desenho
@@ -243,13 +316,18 @@ class Partida:
 
         # poeira: o pe empurra o chao para tras na saida, e espalha no pouso
         pe_x, pe_y = est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM
+        if est.impulso:
+            # mola ou orbe: o salto estoura em luz, na cor do mundo
+            self.faiscas.soltar(pe_x, pe_y - JOGADOR_TAM * 0.5, self.fase.tema.destaque, 16)
+            self.ecos.soltar(pe_x, pe_y, self.fase.tema.destaque)
+            self.cam.sacudir(4.0)
         if est.acao == "pulo":
             self.poeira.soltar(pe_x, pe_y, self.cor_poeira, 6, 0.6, para_tras=1.0)
         elif est.pousou:
             self.poeira.soltar(pe_x, pe_y, self.cor_poeira, 9, 1.2)
 
         if est.acao:
-            self._som("pulo")
+            self._som(est.impulso or "pulo")
         # o julgamento e do TOQUE, na hora dele -- mesmo guardado, com o pulo so
         # saindo no pouso. O pulo que se repete por segurar o botao e julgado
         # na hora em que sai.
@@ -259,10 +337,20 @@ class Partida:
                 self._som(tipo)
                 # o acerto estoura em luz em volta do Leo: mais e na cor do mundo no PERFEITO
                 perfeito = tipo == "perfeito"
+                if perfeito:
+                    self.ecos.soltar(est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM,
+                                     self.fase.tema.destaque)
                 self.faiscas.soltar(est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM * 0.4,
                                     self.fase.tema.destaque if perfeito else AMARELO,
                                     12 if perfeito else 7)
+                if ritmo.combo and ritmo.combo % MARCO_COMBO == 0:
+                    # o marco da sequencia: um estouro maior, em duas cores
+                    self.marco = (est.tempo, ritmo.combo)
+                    self.faiscas.soltar(est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM * 0.4,
+                                        AMARELO, 20)
+        self._pegar_brilhos()
         if est.dano:
+            self.dano_em = (est.tempo, est.vidas)   # o coracao que acabou de esvaziar
             self._doeu()
             ritmo.falhar(est.tempo)
         # marca cuja janela passou sem toque vira ERROU: sem ponto e sem
@@ -273,6 +361,23 @@ class Partida:
             self._encerrar(False)
         elif est.venceu:
             self._encerrar(True)
+
+    def _pegar_brilhos(self):
+        """Os ecos no ar: pega quem passa com o corpo por cima deles."""
+        est, brilhos = self.est, self.fase.brilhos
+        cx, cy = est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM * 0.5
+        while self.brilho_i < len(brilhos) and brilhos[self.brilho_i][0] < cx - ALCANCE_ECO[0]:
+            self.brilho_i += 1
+        i = self.brilho_i
+        while i < len(brilhos) and brilhos[i][0] <= cx + ALCANCE_ECO[0]:
+            bx, by, _ = brilhos[i]
+            if i not in self.pegos and abs(by - JOGADOR_TAM * 0.5 - cy) <= ALCANCE_ECO[1]:
+                self.pegos.add(i)
+                self.eco_em = est.tempo
+                self.ritmo.bonus += PONTOS_ECO
+                self.faiscas.soltar(bx, by - JOGADOR_TAM * 0.5, self.fase.tema.destaque, 8)
+                self._som("eco")
+            i += 1
 
     def _doeu(self):
         self._som("erro")
@@ -289,12 +394,14 @@ class Partida:
             self.morte = efeitos.Desintegracao(*mundo.sprite_heroi(self.fase, est, self.y_desenho))
         progresso = min(100.0, est.x / self.fase.fim_x * 100.0)
         recorde_antes = save.recorde(self.fase.ident)["pontos"]
-        save.registrar(self.fase.ident, progresso, venceu, r.pontos, r.nota(), r.precisao())
+        save.registrar(self.fase.ident, progresso, venceu, r.pontos + r.bonus, r.nota(),
+                       r.precisao(), len(self.pegos))
         self.resultado = {
-            "fase": self.fase, "completou": venceu, "pontos": r.pontos,
+            "fase": self.fase, "completou": venceu, "pontos": r.pontos + r.bonus,
+            "ecos": len(self.pegos), "ecos_total": len(self.fase.brilhos),
             "nota": r.nota(), "precisao": r.precisao(), "perfeitos": r.perfeitos,
             "bons": r.bons, "erros": r.erros, "combo": r.melhor_combo,
-            "progresso": progresso, "recorde": r.pontos > recorde_antes,
+            "progresso": progresso, "recorde": r.pontos + r.bonus > recorde_antes,
         }
 
     # --------------------------------------------------------------- desenhar
@@ -313,23 +420,42 @@ class Partida:
             alpha.desenhar(tela, self, cam_x, cam_y, espera)   # a versao alpha, simplificada
         else:
             # as estrelas piscam desde a largada, sem pular quando a musica entra
-            self.cenario.desenhar(tela, cam_x, cam_y, self.espera + self.est.tempo, pulso)
+            self.cenario.desenhar(tela, cam_x, cam_y, self.espera + self.est.tempo, pulso,
+                                  **cena(self.fase, self.est.x))
             self.ar.desenhar(tela, cam_x, cam_y, self.espera + self.est.tempo)
+            ar_ato = self.ar_atos.get(self.fase.ato(self.est.x))
+            if ar_ato:
+                ar_ato.desenhar(tela, cam_x, cam_y, self.espera + self.est.tempo)
             # depois de um portal rapido, o vento corta o ceu
             self.vento.desenhar(tela, self.est.tempo,
                                 self.fase.vx_em(self.est.x) > self.fase.vx * 1.1,
                                 self.cor_vento, 1.0 / 60.0)
+            self.ecos.desenhar(tela, cam_x, cam_y)
+            mundo.desenhar_brilhos(tela, self.fase, cam_x, cam_y, self.pegos,
+                                   self.espera + self.est.tempo)
             mundo.desenhar(tela, self.fase, self.est, cam_x, cam_y, pulso, espera, self.y_desenho,
-                           heroi=self.morte is None)
+                           heroi=self.morte is None,
+                           rastro=self.rastro if self.morte is None and self.modo == JOGANDO else ())
             self.poeira.desenhar(tela, cam_x, cam_y)
             self.faiscas.desenhar(tela, cam_x, cam_y)
+            for dx, dy, texto in self.fase.dicas:
+                # a legenda da mecanica nova: escrita no mundo, passa com ele
+                if -200 <= dx - cam_x <= LARGURA + 200:
+                    ui.desenhar_texto(tela, texto, 18, int(dx - cam_x), int(dy - cam_y), BRANCO,
+                                      contorno=CONTORNO_HUD)
+            tela.blit(_vinheta(), (0, 0))
+            self._bordas(tela, pulso)
             self._hud(tela, pulso)
         self._letreiro(tela)
+        if self.modo == ESPERANDO and self.espera > 0.6 and int(self.espera * 1.6) % 4 != 3:
+            # a fase espera o toque: sem este aviso ninguem sabia que era o ESPACO
+            ui.dicas(tela, (("ESPACO", "COMECA"),), ALTURA * 0.62)
         if self.modo == PAUSADO:
             # o escuro chega suave, num instante; o menu ja esta la
             ui.escurecer_tela(tela, int(170 * ui.suave(self.tempo_pausa / 0.15)))
             ui.desenhar_texto(tela, "PAUSADO", 56, LARGURA // 2, 200, self.fase.tema.destaque)
             self.menu_pausa.desenhar(tela)
+            ui.dicas(tela, (("SETAS", "ESCOLHEM"), ("ENTER", "CONFIRMA"), ("ESC", "CONTINUA")), 612)
         elif self.modo == RETOMANDO:
             passo = self._tempo_contagem()
             falta = self.contagem / (CONTAGEM * passo)
@@ -378,6 +504,27 @@ class Partida:
                 img = arte.fantasma(img, alfa)
             tela.blit(img, img.get_rect(center=(LARGURA // 2, int(y + dy))))
 
+    def _bordas(self, tela, pulso):
+        """
+        A batida acende as bordas da tela, de leve -- mais forte no primeiro
+        tempo do compasso, para o jogador sentir o 1 sem olhar para nada. Uma
+        pancada as tinge de vermelho por um instante.
+        """
+        alfa_dano = 0
+        if self.dano_em is not None:
+            alfa_dano = int(200 * max(0.0, 1.0 - (self.est.tempo - self.dano_em[0]) / 0.4))
+        luz, alfa = self.luz_dano, alfa_dano
+        if not alfa_dano and self.modo == JOGANDO and pulso > 0.05:
+            tempo_do_compasso = int(self.est.tempo / self.fase.dur_batida + 0.01) % 4
+            luz, alfa = self.luz_batida, int((70 if tempo_do_compasso == 0 else 32) * pulso)
+        if alfa <= 0:
+            return
+        cima, baixo, esq, dir_ = luz
+        for img, pos in ((cima, (0, 0)), (baixo, (0, ALTURA - BORDA)),
+                         (esq, (0, BORDA)), (dir_, (LARGURA - BORDA, BORDA))):
+            img.set_alpha(alfa)
+            tela.blit(img, pos)
+
     def _hud(self, tela, pulso):
         est, r, tema = self.est, self.ritmo, self.fase.tema
         # canto superior esquerdo: coracoes e nome da fase
@@ -388,12 +535,45 @@ class Partida:
             img = arte.coracao(tam, VERMELHO, cheio, batendo)
             # centrado: o coracao que bate cresce para todos os lados, sem pular
             tela.blit(img, img.get_rect(center=(28 + i * 46 + 18, 46)))
+        if self.dano_em is not None:
+            # o coracao que se perdeu: estoura cheio, cresce e some por cima do vazio
+            t = est.tempo - self.dano_em[0]
+            i = self.dano_em[1]
+            if 0.0 <= t < 0.45 and i < VIDAS:
+                k = t / 0.45
+                img = arte.coracao(36 + int(28 * ui.suave(k)), VERMELHO, True, True)
+                img = arte.fantasma(img, max(16, int(255 * (1.0 - k)) // 16 * 16))
+                tela.blit(img, img.get_rect(center=(28 + i * 46 + 18, 46 - int(10 * k))))
         ui.desenhar_texto(tela, self.fase.nome, 18, 28, 92, tema.destaque, "esquerda", CONTORNO_HUD)
+        if self.fase.brilhos:
+            # os ecos pegos: o losango e a conta, que salta quando entra mais um
+            novo = self.eco_em is not None and 0.0 <= est.tempo - self.eco_em < 0.18
+            tela.blit(mundo.icone_eco(tema.destaque), (28, 108 - (3 if novo else 0)))
+            ui.desenhar_texto(tela, f"{len(self.pegos)}/{len(self.fase.brilhos)}", 20 if novo else 18,
+                              62, 122, BRANCO if novo else tema.destaque, "esquerda", CONTORNO_HUD)
 
         # canto superior direito: pontuacao e combo
-        ui.desenhar_texto(tela, f"{r.pontos:05d}", 44, LARGURA - 28, 50, BRANCO, "direita", CONTORNO_HUD)
+        # a pontuacao conta ate a de verdade, e fica na cor do mundo enquanto conta
+        total = r.pontos + r.bonus
+        if self.pontos_tela < total:
+            self.pontos_tela = min(float(total),
+                                   self.pontos_tela + max(1.0, (total - self.pontos_tela) * 0.25))
+        else:
+            self.pontos_tela = float(total)
+        contando = self.pontos_tela < total
+        ui.desenhar_texto(tela, f"{int(self.pontos_tela):05d}", 44, LARGURA - 28, 50,
+                          tema.destaque if contando else BRANCO, "direita", CONTORNO_HUD)
         if r.combo >= 3:
-            ui.desenhar_texto(tela, f"x{r.combo}", 24, LARGURA - 28, 96, AMARELO, "direita",
+            # a sequencia cresce de tamanho conforme sobe: 30 px, 34 a partir de 25, 38 de 50
+            base = 30 + (4 if r.combo >= 25 else 0) + (4 if r.combo >= 50 else 0)
+            tam, cor = base, AMARELO
+            if self.marco is not None and self.marco[1] == r.combo:
+                k = (est.tempo - self.marco[0]) / 0.6
+                if k < 1.0:      # o marco: o numero estoura e volta, na cor do mundo
+                    tam, cor = base + int(16 * (1.0 - ui.suave(k))), tema.destaque
+                    ui.desenhar_texto(tela, "SEQUENCIA!", 16, LARGURA - 28, 138, tema.destaque,
+                                      "direita", CONTORNO_HUD)
+            ui.desenhar_texto(tela, f"x{r.combo}", tam, LARGURA - 28, 100, cor, "direita",
                               CONTORNO_HUD)
 
         # centro: julgamento da ultima acao, sumindo em menos de um segundo
@@ -434,6 +614,16 @@ class Partida:
         bx, by, bw, bh = 250, ALTURA - 40, 760, 12
         frac = min(1.0, self.est.x / fase.fim_x)
         ui.barra(tela, bx, by, bw, bh, frac, tema.destaque)
+        melhor = self.melhor_antes / 100.0
+        if 0.0 < melhor < 1.0:
+            # ate onde o jogador ja chegou: uma bandeirinha no trilho, que acende
+            # quando ele passa dela
+            mx = int(bx + bw * melhor)
+            cor = AMARELO if frac >= melhor else BRANCO
+            pygame.draw.rect(tela, CONTORNO_HUD, (mx - 2, by - 12, 5, bh + 16))
+            pygame.draw.rect(tela, cor, (mx - 1, by - 11, 3, bh + 14))
+            pygame.draw.rect(tela, CONTORNO_HUD, (mx + 1, by - 14, 10, 8))
+            pygame.draw.rect(tela, cor, (mx + 2, by - 13, 8, 6))
         px, py = bx + bw + 22, by + bh // 2
         rosto = arte.retrato(CONTORNO_HUD)
         tela.blit(rosto, (int(bx + bw * frac - rosto.get_width() / 2),

@@ -3,6 +3,7 @@ Desenho do mundo da fase (chao, blocos, cacos, guias, enfeites e o
 heroi) e a camera que o acompanha. So as colunas visiveis sao percorridas.
 """
 
+import math
 import random
 
 import pygame
@@ -30,6 +31,30 @@ AMBIENTE = {
 # no bosque o chao e terra firme: o leito dos cacos e o FUNDO de um fosso, que
 # desce ate o pe da tela (nas ilhas e na cidadela e uma prateleira no ar)
 FOSSO = {"bosque": terreno.fosso}
+# O mapa muda de cara a cada parte da musica (fase.ato): introducao, A, B, A'.
+# Quais enfeites (os numeros de enfeite_N.png) moram em cada ato...
+ENFEITES_DO_ATO = {
+    # a trilha (placa, cerca, lampiao) -> a mata -> as ruinas -> o santuario
+    # (os cogumelos, 8, sairam: liam-se como o cogumelo que fere)
+    "bosque": ((3, 7, 1), (1, 2, 7), (4, 5, 6), (6, 1, 5, 2, 3)),
+    # os cristais -> os cataventos -> as ruinas e os baloes -> a festa das lanternas
+    # (o cristal, 1, e o catavento de pontas, 4, sairam: pareciam perigo)
+    "ilhas": ((6, 2), (6, 3), (2, 3, 5), (5, 3, 2)),
+    # a muralha (tochas, estandartes) -> a guarda -> o patio das gargulas -> a catedral
+    # (o braseiro, 3, e a gargula, 4, sairam: chama e chifres pareciam perigo)
+    "eclipse": ((1, 2), (1, 2, 5), (7, 5, 6), (6, 7, 5, 2)),
+}
+# ...e quais desenhos de perigo (0 = o caco original, 1 e 2 = as variantes dele,
+# 3 e 4 = os outros tipos). A introducao mostra so o perigo mais simples; a
+# parte B troca de tipo; o final junta tudo. Todo desenho passou pelo robo em
+# todos os perigos da fase, entao qualquer distribuicao continua justa.
+CACOS_DO_ATO = {
+    "bosque": ((0,), (0, 1, 2), (3, 4, 1), (0, 3, 4, 2)),
+    "ilhas": ((0, 1), (0, 1, 2), (3, 4), (0, 1, 2, 3, 4)),
+    "eclipse": ((0, 2), (0, 1, 2), (4, 3), (0, 1, 2, 3, 4)),
+}
+RAIO_AURA = 4         # o clarao em volta de cada perigo, em px
+AFUNDA_ENFEITE = 6    # o enfeite miudo afunda menos: quase tudo dele e para ver
 AFUNDA_COLUNA = 14    # a base da coluna fica atras da borda do chao: ela esta mais longe
 
 
@@ -51,6 +76,8 @@ class Camera:
             return                     # na altura de sempre: a fase alpha e plana
         chao = fase.nivel_chao(int((est.x + JOGADOR_TAM) // TILE)) * TILE
         alvo = chao - ALTURA * ANCORA_Y
+        # num salto de mola ou de orbe o Leo sobe muito: a camera sobe junto
+        alvo = min(alvo, est.y - ALTURA * 0.24)
         self.y += (alvo - self.y) * min(1.0, dt * 5.0)
         self.tremor = max(0.0, self.tremor - dt * 40.0)
 
@@ -71,19 +98,25 @@ def preparar(fase):
         _leitos(fase)
     # os cacos (com volume e glitch) e o bloco prontos antes do 1o quadro: ler
     # arquivo e sombrear pixel a pixel no meio da musica daria um tranco
-    for quantidade in {p.quantidade for p in fase.perigos}:
-        arte.caco(quantidade, tema.perigo, 0, tema.nome)
+    _variar_cacos(fase)
+    cor_aura = arte.clarear(tema.perigo, 0.3)
+    for quantidade, variante in {(p.quantidade, p.variante) for p in fase.perigos}:
+        for i in range(arte.QUADROS_GLITCH):
+            arte.aura(arte.caco(quantidade, tema.perigo, i, tema.nome, variante), cor_aura, RAIO_AURA)
     # e a colisao de cada caco passa a ser a silhueta do desenho desta fase
     for p in fase.perigos:
-        p.perfil = arte.perfil_caco(p.quantidade, tema.perigo, tema.nome, FOLGA_CACO)
-    if fase.blocos:
-        arte.bloco(tema.bloco, tema.chao_topo, tema.nome)
+        p.perfil = arte.perfil_caco(p.quantidade, tema.perigo, tema.nome, FOLGA_CACO, p.variante)
+    for v in range(arte.variantes_bloco(tema.nome) if fase.blocos else 0):
+        arte.bloco(tema.bloco, tema.chao_topo, tema.nome, v)
     amb = AMBIENTE.get(tema.nome)
     for d in fase.decos:
         if d.tipo == "portal":
             arte.portal(int(d.w), int(d.h), tema.destaque, 0, tema.nome)
         elif d.tipo == "arvore":
             _arvore(d, tema)
+        elif d.tipo == "enfeite":
+            for i in range(4):
+                _enfeite(d, tema, i)
         else:
             for aceso in (False, True):
                 img = arte.coluna(int(d.w), int(d.h), tema.bloco, tema.chao_topo, aceso,
@@ -92,8 +125,35 @@ def preparar(fase):
                     arte.recuar(img, amb[0], amb[1])
 
 
+def variante_bloco(nome, tx):
+    """Qual desenho o bloco da coluna `tx` usa: fixo pela posicao, a fase e sempre a mesma."""
+    return (tx * 2654435761 >> 8) % arte.variantes_bloco(nome)
+
+
+def _variar_cacos(fase):
+    """
+    Sorteia o desenho de cada caco entre as variantes que a fase tem. Cacos
+    vizinhos (uma fileira no fundo de um fosso) saem todos iguais: o grupo e
+    uma coisa so, e o sorteio e fixo pela posicao -- a fase e sempre a mesma.
+    """
+    nome = fase.tema.nome
+    grupo = None
+    anterior = None
+    for p in sorted(fase.perigos, key=lambda p: (p.y, p.x)):
+        if anterior is None or p.y != anterior.y or p.x - anterior.x > TILE:
+            grupo = (int(p.x // TILE) * 2654435761 >> 9) & 0xFFFF
+        anterior = p
+        n = arte.variantes_caco(p.quantidade, nome)
+        atos = CACOS_DO_ATO.get(nome)
+        if atos:
+            quais = [v for v in atos[min(fase.ato(p.x), len(atos) - 1)] if v < n] or [0]
+            p.variante = quais[grupo % len(quais)]
+        else:
+            p.variante = grupo % n
+
+
 def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None, y_heroi=None, heroi=True,
-             simples=False):
+             simples=False, rastro=()):
     """
     Desenha tudo que pertence a fase. `pulso` vai de 1 na batida a 0.
     `espera` e o tempo parado na largada: enquanto nao e None, Leo fica de pe.
@@ -108,7 +168,8 @@ def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None, y_heroi=None, he
     # enfeites ficam atras de tudo
     for d in fase.decos:
         if cam_x - d.w <= d.x <= cam_x + LARGURA and not (simples and d.tipo != "portal"):
-            _desenhar_deco(tela, d, cam_x, cam_y, tema, pulso, 0.0 if simples else est.tempo)
+            _desenhar_deco(tela, d, cam_x, cam_y, tema, pulso, 0.0 if simples else est.tempo,
+                           None if simples else est.x)
 
     # chao: desenhado por terreno.py; sem estilo la (ou na alpha), o chao de sempre
     if tema.nome in TERRENO_DESENHADO and not simples:
@@ -122,17 +183,22 @@ def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None, y_heroi=None, he
             img = arte.portal_velocidade(rapido, int(est.tempo * 12))
             tela.blit(img, (px - cam_x - img.get_width() // 2, py - cam_y - img.get_height() + 4))
 
+    _desenhar_pontes(tela, fase, cam_x, cam_y, c0, c1)
+    _desenhar_molas(tela, fase, est, cam_x, cam_y, pulso)
+
     amb = AMBIENTE.get(tema.nome)
     for tx, ty in fase.blocos:
         if c0 <= tx < c1 and (tx, ty) not in est.quebrados:
             bx, by = tx * TILE - cam_x, ty * TILE - cam_y
             if amb:
                 _base_do_bloco(tela, fase, tx, ty, bx, by, amb)
-            tela.blit(arte.bloco(tema.bloco, tema.chao_topo, tema.nome), (bx, by))
+            tela.blit(arte.bloco(tema.bloco, tema.chao_topo, tema.nome,
+                                 0 if simples else variante_bloco(tema.nome, tx)), (bx, by))
 
     # o glitch dos cacos corre solto, FORA da grade: o perigo nunca pode
     # piscar na batida, ou vira uma pista falsa de tempo.
     q = 0 if simples else int(est.tempo * 12)
+    cor_aura = arte.clarear(tema.perigo, 0.3)
     if amb:
         fosso = FOSSO.get(tema.nome)
         for (a, b, y) in _leitos(fase):
@@ -145,8 +211,12 @@ def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None, y_heroi=None, he
         for p in fase.col_perigos.get(tx, ()):
             # cada coluna com a sua defasagem: os glitches nunca batem juntos
             fase_glitch = 0 if simples else (tx * 2654435761 >> 11) % 16
-            tela.blit(arte.caco(p.quantidade, tema.perigo, q + fase_glitch, tema.nome),
-                      (p.x - cam_x, p.y - cam_y))
+            img = arte.caco(p.quantidade, tema.perigo, q + fase_glitch, tema.nome,
+                            0 if simples else p.variante)
+            if not simples:
+                tela.blit(arte.aura(img, cor_aura, RAIO_AURA),
+                          (p.x - cam_x - RAIO_AURA, p.y - cam_y - RAIO_AURA))
+            tela.blit(img, (p.x - cam_x, p.y - cam_y))
 
     # guias de "pule aqui": so as que ainda estao a frente de Leo
     if simples:
@@ -159,8 +229,168 @@ def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None, y_heroi=None, he
             tela.blit(seta, (mx - cam_x + TILE // 2 - seta.get_width() // 2,
                              my - 74 - seta.get_height() - int(8 * pulso) - cam_y))
 
+    _desenhar_orbes(tela, fase, est, cam_x, cam_y, pulso)
+
+    # o rastro da sequencia: os ultimos quadros do Leo, cada vez mais apagados
+    for i, (q, qx, qy) in enumerate(rastro):
+        tela.blit(arte.fantasma(q, 40 + 30 * i), (qx - cam_x, qy - cam_y))
     if heroi:
         _desenhar_heroi(tela, fase, est, cam_x, cam_y, espera, est.y if y_heroi is None else y_heroi)
+
+
+_BRILHOS = {}
+_PECAS = {}
+
+
+def _laje(tema, esq, dir_):
+    """Um tile de passarela: uma laje fina, clara em cima, com as pontas fechadas."""
+    chave = ("laje", tema.nome, esq, dir_)
+    if chave not in _PECAS:
+        img = pygame.Surface((TILE, 20), pygame.SRCALPHA)
+        corpo = arte.clarear(tema.bloco, 0.12)
+        a = 3 if esq else 0
+        b = TILE - (3 if dir_ else 0)
+        pygame.draw.rect(img, arte.escurecer(tema.bloco, 0.6), (a, 0, b - a, 17))
+        pygame.draw.rect(img, corpo, (a + (3 if esq else 0), 3, b - a - (3 if esq else 0) - (3 if dir_ else 0), 11))
+        pygame.draw.rect(img, tema.chao_topo, (a, 0, b - a, 6))
+        pygame.draw.rect(img, arte.clarear(tema.chao_topo, 0.6), (a, 0, b - a, 3))
+        for x in range(a + 9, b - 6, 15):                 # as juntas da laje
+            pygame.draw.rect(img, arte.escurecer(tema.bloco, 0.6), (x, 6, 3, 6))
+        if esq or dir_:                                   # o tirante que a segura
+            pygame.draw.rect(img, arte.escurecer(tema.bloco, 0.6), (a + 3 if esq else b - 9, 14, 6, 6))
+        _PECAS[chave] = img
+    return _PECAS[chave]
+
+
+def _desenhar_pontes(tela, fase, cam_x, cam_y, c0, c1):
+    """As passarelas no ar (so seguram quem vem de cima: sao finas, nao um muro)."""
+    for tx in range(c0, c1):
+        for ty in fase.pontes_col.get(tx, ()):
+            img = _laje(fase.tema, (tx - 1, ty) not in fase.pontes, (tx + 1, ty) not in fase.pontes)
+            tela.blit(_sombra(TILE, 6, 60), (tx * TILE - cam_x, ty * TILE - cam_y + 18))
+            tela.blit(img, (tx * TILE - cam_x, ty * TILE - cam_y))
+
+
+def _seta_cima(cor, u=3):
+    """Uma seta para cima em pixels grandes: o sinal da mola."""
+    chave = ("seta", cor, u)
+    if chave not in _PECAS:
+        img = pygame.Surface((7 * u, 4 * u), pygame.SRCALPHA)
+        for y in range(4):
+            for x in (3 - y, 3 + y):
+                img.fill(cor, (x * u, y * u, u, u))
+                if y:
+                    img.fill(cor, (x * u, (y - 1) * u, u, u))
+        _PECAS[chave] = img
+    return _PECAS[chave]
+
+
+def _desenhar_molas(tela, fase, est, cam_x, cam_y, pulso):
+    """
+    A mola: uma placa de luz no chao, com setas subindo. Ela marca o tempo
+    (pulsa na batida): e um convite, nao um perigo.
+    """
+    cor = fase.tema.destaque
+    clara = arte.clarear(cor, 0.6)
+    for x0, x1, y in fase.molas:
+        a, b = x0 + 8 - cam_x, x1 + JOGADOR_TAM - 8 - cam_x
+        if b < 0 or a > LARGURA:
+            continue
+        sy = y - cam_y
+        larg = int(b - a)
+        alto = 8 + int(4 * pulso)
+        pygame.draw.rect(tela, arte.escurecer(cor, 0.5), (a - 3, sy - alto - 3, larg + 6, alto + 6))
+        pygame.draw.rect(tela, cor, (a, sy - alto, larg, alto))
+        pygame.draw.rect(tela, (255, 255, 255), (a, sy - alto, larg, 3))
+        # as setas sobem sem parar por cima da placa
+        seta = _seta_cima(clara)
+        n = max(2, larg // 44)
+        for k in range(n):
+            cx = a + (k + 0.5) * larg / n
+            for passo in range(3):
+                sobe = (est.tempo * 60.0 + passo * 16) % 48
+                img = arte.fantasma(seta, int(255 * (1.0 - sobe / 48.0)) // 32 * 32 + 31)
+                tela.blit(img, (cx - seta.get_width() // 2, sy - alto - 14 - sobe))
+
+
+def _anel(cor, raio, grosso):
+    chave = ("anel", cor, raio, grosso)
+    if chave not in _PECAS:
+        u = 3
+        n = raio * 2 + 3
+        img = pygame.Surface((n * u, n * u), pygame.SRCALPHA)
+        c = n // 2
+        for y in range(n):
+            for x in range(n):
+                d = math.hypot(x - c, y - c)
+                if raio - grosso < d <= raio + 0.3:
+                    img.fill(cor, (x * u, y * u, u, u))
+                elif d <= raio - grosso - 2:
+                    img.fill((255, 255, 255) if d <= 1.5 else arte.clarear(cor, 0.5),
+                             (x * u, y * u, u, u))
+        _PECAS[chave] = arte.aura(img, cor, 4)
+    return _PECAS[chave]
+
+
+def _desenhar_orbes(tela, fase, est, cam_x, cam_y, pulso):
+    """O orbe: um anel de luz no ar, que respira na batida; usado, ele se apaga."""
+    cor = fase.tema.destaque
+    for i, (ox, oy, _, _) in enumerate(fase.orbes):
+        if not cam_x - TILE * 2 <= ox <= cam_x + LARGURA + TILE * 2:
+            continue
+        if i in est.orbes:
+            img = arte.fantasma(_anel(arte.escurecer(cor, 0.4), 5, 1), 96)
+        else:
+            img = _anel(cor, 6 if pulso > 0.5 else 5, 2)
+        tela.blit(img, (ox - cam_x - img.get_width() // 2, oy - cam_y - img.get_height() // 2))
+
+
+def _brilho(cor, alto, quadro):
+    """O eco no ar: um losango de luz que cintila (o alto tem um anel em volta)."""
+    chave = (cor, alto, quadro)
+    if chave not in _BRILHOS:
+        u = 3
+        img = pygame.Surface((11 * u, 11 * u), pygame.SRCALPHA)
+        def ponto(x, y, c):
+            img.fill(c, (x * u, y * u, u, u))
+        raio = 3 if quadro != 1 else 2
+        for y in range(-raio, raio + 1):
+            for x in range(-raio, raio + 1):
+                d = abs(x) + abs(y)
+                if d <= raio:
+                    c = (255, 255, 255) if d <= raio - 2 else cor if d < raio else arte.escurecer(cor, 0.45)
+                    ponto(5 + x, 5 + y, c)
+        if quadro == 2:                                   # a cintilada: quatro pontas
+            for dx, dy in ((0, -5), (0, 5), (-5, 0), (5, 0)):
+                ponto(5 + dx, 5 + dy, (255, 255, 255))
+        if alto:
+            for dx, dy in ((-4, -2), (4, -2), (-4, 2), (4, 2), (-2, -4), (2, -4), (-2, 4), (2, 4)):
+                ponto(5 + dx, 5 + dy, arte.clarear(cor, 0.35))
+        # um halo na cor do mundo: de longe ele se le como coisa de pegar, nao como estrela
+        _BRILHOS[chave] = arte.aura(img, cor, 4)
+    return _BRILHOS[chave]
+
+
+def icone_eco(cor):
+    """O losango do eco, parado: o icone da conta no HUD."""
+    return _brilho(cor, False, 0)
+
+
+def desenhar_brilhos(tela, fase, cam_x, cam_y, pegos, tempo):
+    """Os ecos que ainda estao no ar, subindo e descendo devagar (fora da batida)."""
+    cor = fase.tema.destaque
+    for i, (x, y, alto) in enumerate(fase.brilhos):
+        if x < cam_x - TILE:
+            continue
+        if x > cam_x + LARGURA + TILE:
+            break
+        if i in pegos:
+            continue
+        quadro = (int(tempo * 6) + i * 3) % 8
+        img = _brilho(cor, alto, 2 if quadro == 0 else 1 if quadro == 4 else 0)
+        dy = math.sin(tempo * 3.0 + i * 1.7) * 3.0
+        tela.blit(img, (x - cam_x - img.get_width() // 2,
+                        y - JOGADOR_TAM * 0.5 - cam_y - img.get_height() // 2 + dy))
 
 
 def _desenhar_chao(tela, fase, cam_x, cam_y, c0, c1):
@@ -191,7 +421,39 @@ def _arvore(d, tema):
     return arte.recuar(arte.arvore(d.variante), amb[0], amb[1])
 
 
-def _desenhar_deco(tela, d, cam_x, cam_y, tema, pulso, tempo):
+def _enfeite(d, tema, i):
+    """O enfeite, um pouco puxado para a cor do fundo (menos que as colunas: e miudo)."""
+    atos = ENFEITES_DO_ATO.get(tema.nome)
+    img = None
+    if atos and d.ato is not None:
+        quais = atos[min(d.ato, len(atos) - 1)]
+        img = arte.enfeite_numero(tema.nome, quais[d.variante % len(quais)], i)
+    if img is None:
+        img = arte.enfeite(tema.nome, d.variante, i)
+    amb = AMBIENTE.get(tema.nome)
+    if img is None or not amb:
+        return img
+    # bem recuado: o que brilha e tem cor viva no caminho e so o que importa
+    return arte.recuar(img, amb[0], amb[1] * 0.85)
+
+
+ACORDA = 7 * TILE     # a que distancia, a frente do Leo, o enfeite animado acorda
+_pocas = {}
+
+
+def _poca(cor, larg):
+    """A luz que um enfeite aceso joga no chao: uma elipse macia, somada a cena."""
+    chave = (cor, larg)
+    if chave not in _pocas:
+        s = pygame.Surface((larg, 22))
+        for i, k in enumerate((0.10, 0.18, 0.28)):
+            pygame.draw.ellipse(s, tuple(int(c * k) for c in cor),
+                                (i * larg // 8, i * 3, larg - i * larg // 4, 22 - i * 6))
+        _pocas[chave] = s
+    return _pocas[chave]
+
+
+def _desenhar_deco(tela, d, cam_x, cam_y, tema, pulso, tempo, leo_x=None):
     x, y = d.x - cam_x, d.y - cam_y
     if d.tipo == "arvore":
         # de pe atras do caminho, com o pe escondido pela borda do chao
@@ -211,6 +473,29 @@ def _desenhar_deco(tela, d, cam_x, cam_y, tema, pulso, tempo):
             img = arte.recuar(img, amb[0], amb[1])
             desce = AFUNDA_COLUNA
         tela.blit(img, (x + (d.w - img.get_width()) // 2, y + d.h - img.get_height() + desce))
+    elif d.tipo == "enfeite":
+        # miudezas de pe atras do caminho; as animadas (chama, lanterna) correm
+        # soltas da batida -- so a coluna marca o tempo
+        # O mundo acorda com a musica: o que tem luz (lampiao, tocha, lanterna)
+        # dorme apagado e parado, e acende quando o Leo chega perto.
+        img = _enfeite(d, tema, int(tempo * 7) + d.variante)
+        if img is not None:
+            vivo = _enfeite(d, tema, 1) is not _enfeite(d, tema, 0)     # tem mais de um quadro
+            acordou = leo_x is None or d.x < leo_x + ACORDA
+            pe = y + d.h + AFUNDA_ENFEITE
+            ex = x + (d.w - img.get_width()) // 2
+            if leo_x is not None:
+                tela.blit(_sombra(max(20, img.get_width() - 8), 8, 80),
+                          (ex + 4, pe - AFUNDA_ENFEITE - 4))
+            if vivo and not acordou:
+                img = arte.recuar(_enfeite(d, tema, 0), (10, 8, 22), 0.5)
+            tela.blit(img, (ex, pe - img.get_height()))
+            if vivo and acordou and leo_x is not None:
+                perto = 1.0 - min(1.0, max(0.0, (leo_x + ACORDA - d.x) / (TILE * 1.5)))
+                larg = 96 + int(40 * perto)            # acabou de acender: a luz estoura
+                tela.blit(_poca(tema.destaque, larg),
+                          (x + d.w // 2 - larg // 2, pe - AFUNDA_ENFEITE - 12),
+                          special_flags=pygame.BLEND_RGB_ADD)
     else:   # portal
         img = arte.portal(int(d.w), int(d.h), tema.destaque, int(tempo * 8), tema.nome)
         tela.blit(img, (x + (d.w - img.get_width()) // 2, y + d.h - img.get_height()))

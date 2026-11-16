@@ -5,10 +5,12 @@ A fonte e a Silkscreen (SIL OFL), renderizada SEM antialias para continuar
 pixel art. Cada texto e rasterizado uma vez e guardado em cache.
 """
 
+import math
+
 import pygame
 
 from . import arte
-from .config import FONTE, BRANCO, PAINEL, AZUL, CINZA
+from .config import FONTE, BRANCO, PAINEL, AZUL, CINZA, CONTORNO, LARGURA
 
 _fontes = {}
 _textos = {}
@@ -40,7 +42,8 @@ def texto(s, tam, cor=BRANCO, contorno=None):
     if surf is None:
         if len(_textos) > 2000:
             _textos.clear()
-        surf = fonte(tam).render(s, False, cor)
+        # o "&" da Silkscreen parece um "$": nos creditos ("Dosi & Aisake") vira "E"
+        surf = fonte(tam).render(s.replace("&", "E"), False, cor)
         if contorno is not None:
             # o contorno faz o texto do HUD ler em cima de qualquer ceu
             surf = arte.contornar(surf.convert_alpha(), contorno, max(2, tam // 16))
@@ -175,8 +178,48 @@ class Botao:
             # da borda; ela cresce do meio junto com o foco
             alto = int((r.h - 28) * k)
             pygame.draw.rect(tela, self.cor, (r.x + 16, r.centery - alto // 2, 6, alto))
-        desenhar_texto(tela, self.rotulo, 24, r.centerx + int(8 * k), r.centery,
-                       BRANCO if realce else CINZA)
+        desenhar_texto(tela, self.rotulo, 26, r.centerx + int(8 * k), r.centery,
+                       BRANCO if realce else APAGADO)
+        if k > 0.5:
+            # as setinhas que abracam o botao em foco, respirando
+            vai = int(3 * math.sin(pygame.time.get_ticks() * 0.008))
+            for lado in (-1, 1):
+                x = r.centerx + lado * (r.w // 2 + 22 + vai)
+                pygame.draw.polygon(tela, CONTORNO, [(x + lado * 12, r.centery - 13),
+                                                     (x - lado * 5, r.centery), (x + lado * 12, r.centery + 13)])
+                pygame.draw.polygon(tela, self.cor, [(x + lado * 9, r.centery - 8),
+                                                     (x - lado * 1, r.centery), (x + lado * 9, r.centery + 8)])
+
+
+APAGADO = (196, 202, 228)        # texto que nao esta em foco: ainda se le sobre o painel
+TECLA = (226, 230, 244)
+
+
+def dicas(tela, pares, y, alfa_fundo=120):
+    """
+    A linha de ajuda do rodape: cada tecla desenhada como uma TECLA (um chip
+    claro com a letra escura) e, ao lado, o que ela faz. `pares` e uma lista de
+    (tecla, acao). Centrada em `y`.
+    """
+    pecas, larg = [], 0
+    for tecla, acao in pares:
+        t = texto(tecla, 16, CONTORNO)
+        a = texto(acao, 16, APAGADO, CONTORNO)
+        pecas.append((t, a))
+        larg += t.get_width() + 20 + 10 + a.get_width()
+    larg += 36 * (len(pecas) - 1)
+    x = (LARGURA - larg) // 2
+    faixa = pygame.Surface((larg + 48, 40), pygame.SRCALPHA)
+    faixa.fill((*CONTORNO, alfa_fundo))
+    tela.blit(faixa, (x - 24, int(y) - 20))
+    for t, a in pecas:
+        w = t.get_width() + 20
+        pygame.draw.rect(tela, CONTORNO, (x - 2, int(y) - 15, w + 4, 32))
+        pygame.draw.rect(tela, arte.escurecer(TECLA, 0.35), (x, int(y) - 13, w, 28))
+        pygame.draw.rect(tela, TECLA, (x, int(y) - 13, w, 24))
+        tela.blit(t, (x + 10, int(y) - 1 - t.get_height() // 2))
+        tela.blit(a, (x + w + 10, int(y) - a.get_height() // 2))
+        x += w + 10 + a.get_width() + 36
 
 
 class Menu:

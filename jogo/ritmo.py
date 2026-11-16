@@ -32,6 +32,7 @@ class Ritmo:
         self.julgados = [None] * len(self.marcas)
         self.cursor = 0           # primeira marca que ainda pode ser julgada
         self.pontos = 0
+        self.bonus = 0            # pontos dos ecos pegos no ar: nao entram na precisao
         self.perfeitos = self.bons = self.erros = 0
         self.combo = self.melhor_combo = 0
         self.ultimo = None        # ultimo Julgamento mostrado no HUD

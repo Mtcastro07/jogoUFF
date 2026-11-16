@@ -90,6 +90,44 @@ Acertos seguidos formam uma **sequência (combo)**. Tocar fora da partitura não
 - Com os três corações perdidos vem o **fim de jogo**: o Léo se desfaz em ruído.
 - Chegando ao fim da música, a fase está completa e a tela de resultado mostra a nota.
 
+### Ecos (colecionáveis)
+
+No alto do arco de boa parte dos pulos flutua um **eco**. O eco alto só é pego com o
+botão segurado (pulo inteiro) e o baixo só com o toque rápido; nenhum é obrigatório.
+Cada um vale 10 pontos de bônus, que entram na pontuação mas não na precisão nem na
+nota. Eles vêm em frases de dois compassos (altos, baixos, altos, nada, baixos). No
+Bosque, onde o pulo é sempre o inteiro, todos são altos. A tela de resultado mostra
+`ECOS pegos/total`.
+
+### Molas, orbes e portais
+
+- **Mola**: uma placa de luz no chão. O pulo que sai dela é o salto grande: 2 batidas no
+  ar, o dobro do comprimento e 6 tiles de altura. O toque é na batida, como em todo pulo;
+  quem não toca é lançado no fim da placa (sem pontos). Ela leva por cima de uma torre
+  alta, de um abismo largo ou para o alto de um paredão.
+- **Orbe**: um anel de luz no ar, no alto do arco da mola. Um toque perto dele, uma batida
+  depois da mola, é um pulo novo no ar, que alcança o paredão de 6 tiles. Errar o orbe é
+  bater no paredão (um coração).
+- **Portais de velocidade** agora existem nas três fases: o Bosque acelera na reta final,
+  a Cidadela anda devagar na quebra (parte B) e termina na corrida mais rápida do jogo.
+
+- **Passarelas e dois caminhos**: em alguns trechos há uma passarela 2 tiles acima do
+  chão, feita de pedaços com um vão sob cada pulo. Ela só segura quem vem de cima: o pulo
+  inteiro (botão segurado) atravessa por baixo e pousa nela, o toque rápido segue pelo
+  chão. Os ecos do trecho ficam todos em cima; quem perde um pulo lá cai de volta ao chão.
+  No Bosque, onde todo pulo é inteiro, o Leo sempre sobe.
+- A primeira mola, o primeiro orbe e a primeira passarela de cada fase têm uma legenda
+  escrita no mundo, e o HUD mostra a conta de ecos.
+
+- **Opções** (menu principal): volume da música e dos efeitos e o **atraso do áudio**, com
+  um teste de tique e quadrado piscando; na partida a música entra adiantada esse tanto.
+- **Controle**: botões A/X/Y pulam e confirmam, B/Start voltam ou pausam, o direcional
+  navega.
+- As colunas de pedra saíram do caminho nas Ilhas e na Cidadela: liam-se como obstáculo.
+
+Enfeites de chão ficam a pelo menos 2 tiles de qualquer perigo, bloco ou mola, e os que
+se pareciam com perigo (cogumelos, cristal, catavento, braseiro, gárgula) saíram do mapa.
+
 ### Obstáculos
 
 As fases são montadas por um construtor rítmico que traduz uma partitura de batidas em
@@ -104,6 +142,12 @@ geometria. O vocabulário de cada passo da partitura é:
 | sobe | degrau de 1 tile para cima | sim |
 | desce | degrau para baixo | não |
 | pausa | chão plano | não |
+
+O caco e o bloco mudam de **aparência** ao longo da fase, sem mudar a regra (o que
+fere é sempre pontudo e da cor de perigo do mundo, e a colisão segue o desenho):
+cristais e cogumelos de chapéu pontudo no Bosque, cristais rubros e para-raios nas
+Ilhas, braseiros em chamas e lanças em brasa na Cidadela; os blocos alternam entre
+pedra, caixote e pedra lavrada. Os desenhos novos saem de `ferramentas/pintar_arte.py`.
 
 Nas Ilhas Suspensas há também **portais de velocidade**: o portal dourado acelera a
 corrida no drop da música e o azul a devolve à velocidade normal.

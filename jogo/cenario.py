@@ -52,6 +52,12 @@ SEMEADURA_FASE = {
         "nuvem": (76, 32, 0, None),
     },
 }
+# Perspectiva do ar: a peca distante se desfaz no ceu atras dela -- (cor, quanto).
+# As ilhas longe vieram quase pretas, mais escuras que as de perto: sem a nevoa
+# elas pareciam buracos no por do sol, e nao ilhas ao longe.
+NEVOA = {
+    "ilhas": {"longe": ((150, 92, 118), 0.5)},
+}
 VAO = W * 16             # a semeadura se repete so depois disso: nunca, na pratica
 MARGEM = 64              # mais larga que qualquer peca: quem cruza a borda esquerda
                          # sai de cena aos poucos, em vez de sumir de uma vez
@@ -86,6 +92,163 @@ MURALHAS = {
 DERIVA_LIVRE, DERIVA_MAX = 150.0, 190.0
 
 _ceus = {}
+
+# O CLIMA de cada ato (introducao, A, B, A'): o fundo inteiro e multiplicado
+# pela primeira cor e somado a segunda. Nao muda a faixa em que o jogador le os
+# obstaculos (o chao e os perigos nao sao tingidos) -- so diz, pelo ceu, que a
+# musica entrou noutra parte.
+NEUTRO = ((255, 255, 255), (0, 0, 0))
+CLIMA = {
+    # a noite fica violeta nas ruinas e ganha o verde da aurora no final
+    "bosque": (NEUTRO, NEUTRO, ((176, 190, 255), (20, 8, 40)), ((214, 255, 236), (0, 24, 22))),
+    # o por do sol cai no crepusculo e volta num ultimo clarao dourado
+    "ilhas": (NEUTRO, NEUTRO, ((176, 160, 232), (8, 0, 30)), ((255, 232, 200), (30, 10, 0))),
+    # o eclipse sangra na parte B e esfria num azul de aco no final
+    "eclipse": (NEUTRO, NEUTRO, ((255, 176, 184), (38, 0, 6)), ((196, 208, 255), (4, 8, 40))),
+}
+# O astro muda de tamanho de ato em ato: a lua incha sobre as ruinas, o sol das
+# ilhas cresce no ultimo clarao e o eclipse toma o ceu no final.
+ESCALA_ASTRO = {
+    "bosque": (1.0, 1.0, 1.3, 1.1),
+    "ilhas": (1.0, 1.0, 0.9, 1.4),
+    "eclipse": (1.0, 1.0, 1.35, 1.8),
+}
+# nas ilhas o crepusculo da parte B traz as estrelas (0 = nenhuma, 1 = todas)
+NOITE = {"ilhas": (0.0, 0.0, 1.0, 0.0), "bosque": (1.0, 1.0, 1.0, 1.0), "eclipse": (1.0, 1.0, 1.0, 1.0)}
+PASSAGEM_CLIMA = 900.0        # px de mapa que a troca de clima leva (uns 19 tiles)
+
+
+def clima(fase, x):
+    """((multiplica), (soma)) do fundo no ponto `x` do mapa, passando suave entre os atos."""
+    atos = CLIMA.get(fase.tema.nome)
+    if not atos or not fase.secoes_x:
+        return None
+    i = min(fase.ato(x), len(atos) - 1)
+    atual = atos[i]
+    if i > 0:
+        k = (x - fase.secoes_x[i]) / PASSAGEM_CLIMA
+        if k < 1.0:
+            k = max(0.0, k) ** 2 * (3.0 - 2.0 * max(0.0, k))
+            antes = atos[i - 1]
+            atual = tuple(tuple(int(a + (b - a) * k) for a, b in zip(ca, cb))
+                          for ca, cb in zip(antes, atual))
+    return None if atual == NEUTRO else atual
+
+
+def _entre_atos(fase, x, valores):
+    """O valor do ato de `x`, passando suave a partir do valor do ato anterior."""
+    if not fase.secoes_x:
+        return valores[0]
+    i = min(fase.ato(x), len(valores) - 1)
+    v = valores[i]
+    if i > 0:
+        k = max(0.0, min(1.0, (x - fase.secoes_x[i]) / PASSAGEM_CLIMA))
+        v = valores[i - 1] + (v - valores[i - 1]) * k * k * (3.0 - 2.0 * k)
+    return v
+
+
+def cena(fase, x):
+    """Tudo o que o fundo precisa saber do ponto `x` do mapa: clima, astro e noite."""
+    nome = fase.tema.nome
+    return {"clima": clima(fase, x),
+            "astro": round(_entre_atos(fase, x, ESCALA_ASTRO.get(nome, (1.0,))) * 20) / 20,
+            "noite": _entre_atos(fase, x, NOITE.get(nome, (1.0,)))}
+
+
+_escalados = {}
+
+
+def _escalado(img, k):
+    """`img` ampliada `k` vezes (em passos de 5%), em cache."""
+    if abs(k - 1.0) < 0.01:
+        return img
+    chave = (id(img), k)
+    ent = _escalados.get(chave)
+    if ent is None or ent[0] is not img:
+        ent = _escalados[chave] = (img, pygame.transform.scale(
+            img, (max(1, round(img.get_width() * k)), max(1, round(img.get_height() * k)))))
+    return ent[1]
+
+
+# A serra distante: (pe da serra em fracao da tela, altura da tira, corpo, face
+# acesa, cume, nevoa). No bosque o cume e neve ao luar; na cidadela, pedra
+# lambida pela coroa do eclipse.
+PERIODO_SERRA = 640
+SERRAS = {
+    "bosque": (0.50, 46, (26, 40, 70), (44, 62, 96), (170, 190, 214), (22, 34, 66)),
+    "eclipse": (0.50, 52, (30, 16, 44), (56, 32, 66), (150, 100, 84), (20, 9, 34)),
+}
+# quem voa no ceu, e de que cor: passaros nas ilhas (a cor das ilhas distantes:
+# sao longe) e morcegos na cidadela, mais claros que a noite para aparecerem
+REVOADA = {"ilhas": (88, 54, 84), "eclipse": (70, 44, 98)}
+
+# Raios em volta do astro: (cor, quantos, raio de dentro, raio de fora, alfa).
+# Giram devagar, fora da batida; na cidadela e a coroa do eclipse, que estoura
+# junto com o astro. Sao luz, nao desenho: quase transparentes.
+RAIOS = {
+    "ilhas": ((255, 214, 150), 9, 15, 44, 10),
+    "eclipse": ((255, 190, 110), 12, 16, 34, 13),
+}
+QUADROS_RAIOS = 12
+# halo da lua: (cor, raio) de fora para dentro, por cima do ceu
+HALO_LUA = {"bosque": (((24, 37, 70), 21), ((28, 42, 77), 17))}
+# bruma entre os morros do bosque: (altura em fracao da tela, cor, alfa)
+BRUMA = {"bosque": ((0.515, (86, 124, 132), 46), (0.60, (70, 112, 112), 38))}
+PERIODO_BRUMA = 200
+# estrela cadente: de quantos em quantos segundos, e quanto dura
+CADENTE = {"bosque": (11.0, 0.7), "eclipse": (17.0, 0.6)}
+
+
+_raios_prontos = {}
+
+
+def _raios(chave, cor, n, r0, r1, alfa):
+    """
+    [QUADROS_RAIOS superficies]: `n` raios em cunha saindo do astro, um longo e
+    um curto alternados, cada quadro um pouco mais girado -- uma volta do
+    desenho leva so 1/n de volta, entao 12 quadros ja giram sem pulo.
+    """
+    if chave not in _raios_prontos:
+        quadros = []
+        lado = (r1 + 2) * 2
+        for q in range(QUADROS_RAIOS):
+            s = pygame.Surface((lado, lado), pygame.SRCALPHA)
+            c = lado / 2
+            for i in range(n):
+                a = math.tau * (i + q / QUADROS_RAIOS) / n
+                fim = r1 if i % 2 == 0 else r0 + (r1 - r0) * 0.6
+                meia = math.tau / n * 0.2
+                pontos = [(c + r0 * math.cos(a - meia), c + r0 * math.sin(a - meia)),
+                          (c + fim * math.cos(a - meia * 0.5), c + fim * math.sin(a - meia * 0.5)),
+                          (c + fim * math.cos(a + meia * 0.5), c + fim * math.sin(a + meia * 0.5)),
+                          (c + r0 * math.cos(a + meia), c + r0 * math.sin(a + meia))]
+                pygame.draw.polygon(s, (*cor, alfa), pontos)
+                # o miolo do raio e mais forte, e mais curto
+                curto = r0 + (fim - r0) * 0.55
+                pygame.draw.polygon(s, (*cor, alfa + 8), [
+                    pontos[0], (c + curto * math.cos(a), c + curto * math.sin(a)), pontos[3]])
+            quadros.append(s)
+        _raios_prontos[chave] = quadros
+    return _raios_prontos[chave]
+
+
+_brumas_prontas = {}
+
+
+def _bruma(chave, cor, alfa):
+    """Uma tira de bruma que se repete: fiapos compridos, mais densos no meio da altura."""
+    if chave not in _brumas_prontas:
+        s = pygame.Surface((PERIODO_BRUMA, 13), pygame.SRCALPHA)
+        rnd = random.Random(chave)
+        for _ in range(26):
+            larg = rnd.randint(14, 54)
+            x, y = rnd.randrange(PERIODO_BRUMA), rnd.randint(1, 11)
+            forca = int(alfa * (1.0 - abs(y - 6) / 7.0))
+            for xx in (x, x - PERIODO_BRUMA):
+                s.fill((*cor, forca), (xx, y, larg, 1))
+                s.fill((*cor, forca // 2), (xx + 3, y - 1, larg - 8, 1))
+        _brumas_prontas[chave] = s
+    return _brumas_prontas[chave]
 
 
 def _deriva_astro(cx):
@@ -148,6 +311,9 @@ def _pecas(fase, prefixo):
     for i in range(1, 13):
         img = arte.png("objetos", "cenario", fase, f"{prefixo}_{i}.png")
         if img is not None:
+            nevoa = NEVOA.get(fase, {}).get(prefixo)
+            if nevoa:
+                img = arte.recuar(img, *nevoa)
             achadas.append((img, pygame.transform.flip(img, True, False)))
     return achadas
 
@@ -190,6 +356,14 @@ class Cenario:
         if astro[0] is None:
             astro = (arte.png("objetos", "cenario", tema.nome, "astro_3f.png"), 3)
         self.astro = arte.tira(astro[0], astro[1]) if astro[0] else None
+        regra = RAIOS.get(tema.nome)
+        self.raios = _raios(tema.nome, *regra) if regra else None
+        self.raios_fortes = _raios(tema.nome + "+", regra[0], regra[1], regra[2], regra[3] + 6,
+                                   regra[4] + 7) if regra else None
+        self.brumas = [(_bruma(f"{tema.nome}/{i}", cor, alfa), frac)
+                       for i, (frac, cor, alfa) in enumerate(BRUMA.get(tema.nome, ()))]
+        baleia = arte.png("objetos", "cenario", tema.nome, "baleia_2f.png")
+        self.baleia = arte.tira(baleia, 2) if baleia else None
 
     def _clarear_o_sol(self):
         """
@@ -213,7 +387,8 @@ class Cenario:
                 fica.append((u, i, espelhada, altitude))
             self.slots[prefixo] = fica
 
-    def desenhar(self, tela, cam_x, cam_y, tempo, pulso, simples=False):
+    def desenhar(self, tela, cam_x, cam_y, tempo, pulso, simples=False, clima=None, astro=1.0,
+                 noite=None):
         """
         `pulso` vai de 1 (na batida) a 0 (entre batidas). `simples`: a versao
         alpha -- um fundo PARADO: o ceu, o astro e os morros lisos, sem nada
@@ -235,9 +410,12 @@ class Cenario:
             tela.blit(pygame.transform.scale(b, (LARGURA, ALTURA)), (0, 0))
             return
 
-        if tema.nome != "ilhas":
+        if noite is None:
+            noite = 0.0 if tema.nome == "ilhas" else 1.0
+        if noite > 0.02:
             cor = arte.clarear(tema.ceu, 0.7)
-            for x, y, fase in self.estrelas:
+            # anoitecendo, as estrelas acendem uma a uma
+            for x, y, fase in self.estrelas[:int(len(self.estrelas) * noite)]:
                 sx = (x - cx * 0.05) % (W * 2)
                 if sx < W and math.sin(tempo * 2.0 + fase) > -0.3:   # piscam
                     b.fill(cor, (int(sx), int(y + dy), 1, 1))
@@ -245,9 +423,17 @@ class Cenario:
         # sol / lua, respirando junto com a batida
         sx = int(W * 0.74 - _deriva_astro(cx))
         sy = int(H * 0.22 + dy)
+        for cor, raio in HALO_LUA.get(tema.nome, ()):
+            pygame.draw.circle(b, cor, (sx, sy), int(raio * astro) + (1 if pulso > 0.6 else 0))
+        if self.raios:
+            q = self.raios[int(tempo * 2.5) % len(self.raios)]
+            if tema.nome == "eclipse" and pulso > 0.6:
+                q = self.raios_fortes[int(tempo * 2.5) % len(self.raios)]
+            q = _escalado(q, astro)
+            b.blit(q, (sx - q.get_width() // 2, sy - q.get_height() // 2))
         if self.astro is not None:
             # 0 em repouso, 1 estourado na batida, 2 voltando
-            q = self.astro[1 if pulso > 0.6 else 2 if pulso > 0.2 else 0]
+            q = _escalado(self.astro[1 if pulso > 0.6 else 2 if pulso > 0.2 else 0], astro)
             b.blit(q, (sx - q.get_width() // 2, sy - q.get_height() // 2))
         else:
             raio = 12 + int(2 * pulso)
@@ -255,6 +441,23 @@ class Cenario:
             pygame.draw.circle(b, tema.sol, (sx, sy), raio)
             if tema.nome == "eclipse":
                 pygame.draw.circle(b, arte.escurecer(tema.ceu, 0.5), (sx - 1, sy), raio - 2)
+
+        cadente = CADENTE.get(tema.nome)
+        if cadente:
+            self._cadente(b, tempo, dy, cadente, arte.clarear(tema.ceu, 0.85))
+
+        serra = SERRAS.get(tema.nome)
+        if serra:
+            # a serra la longe: quase nao anda, e o que da tamanho ao mundo
+            img = self._serra(tema.nome, serra)
+            x0 = -int(cx * 0.04) % PERIODO_SERRA
+            y0 = int(H * serra[0] + dy) - img.get_height()
+            b.blit(img, (x0 - PERIODO_SERRA, y0))
+            b.blit(img, (x0, y0))
+        if tema.nome in REVOADA:
+            self._revoada(b, cx, dy, tempo, REVOADA[tema.nome])
+        if self.baleia:
+            self._baleia(b, cx, dy, tempo)
 
         self._apoiar(b, "nuvem", cx * 0.08, H * 0.34 + dy, 10, 0.7)
 
@@ -276,11 +479,19 @@ class Cenario:
                 self._mar(b, camada, bolhas, cx, dy)
             self._apoiar(b, "perto", *perto)
         else:
-            self._colinas(b, *longe, arte.escurecer(tema.montanha, 0.35))
+            brumas = self.brumas
+            self._morro(b, *longe, arte.escurecer(tema.montanha, 0.35), capim=False)
             self._apoiar(b, "longe", *longe)
-            self._colinas(b, *perto, tema.montanha)
+            if brumas:
+                self._bruma(b, brumas[0], cx * 0.16 + tempo * 2.0, dy * 2)
+            self._morro(b, *perto, tema.montanha, capim=True)
             self._apoiar(b, "perto", *perto)
+            if len(brumas) > 1:
+                self._bruma(b, brumas[1], cx * 0.3 - tempo * 3.0, dy * 3)
 
+        if clima:
+            b.fill(clima[0], special_flags=pygame.BLEND_RGB_MULT)
+            b.fill(clima[1], special_flags=pygame.BLEND_RGB_ADD)
         tela.blit(pygame.transform.scale(b, (LARGURA, ALTURA)), (0, 0))
 
     def _apoiar(self, b, prefixo, desloc, base, amp, freq):
@@ -306,13 +517,165 @@ class Cenario:
             y = _altura(x + desloc, base, amp, freq) if amp else base
             b.blit(img, (int(x), int(y) - img.get_height() + afundar))
 
+    _serras = {}
+
+    @classmethod
+    def _serra(cls, nome, regra):
+        """
+        A serra, desenhada uma vez numa tira que se repete: picos em dente, a
+        face virada para o astro (a direita) acesa, o cume com neve ou brasa, e
+        a base sumindo na cor do ceu -- a nevoa da distancia.
+        """
+        img = cls._serras.get(nome)
+        if img is not None:
+            return img
+        _, alto, corpo, luz, cume, nevoa = regra
+        img = cls._serras[nome] = pygame.Surface((PERIODO_SERRA, alto), pygame.SRCALPHA)
+
+        def tri(x, periodo, fase=0.0):
+            t = (x / periodo + fase) % 1.0
+            return 1.0 - abs(2.0 * t - 1.0)
+
+        def topo(x):
+            k = 0.55 * tri(x, PERIODO_SERRA / 4, 0.1) + 0.3 * tri(x, PERIODO_SERRA / 10, 0.4) \
+                + 0.15 * tri(x, PERIODO_SERRA / 32)
+            return int(alto - 4 - k * (alto - 6))
+        for x in range(PERIODO_SERRA):
+            y, depois = topo(x), topo((x + 1) % PERIODO_SERRA)
+            antes = topo((x - 1) % PERIODO_SERRA)
+            virada = depois > y or (depois == y and antes < y)      # desce para a direita
+            for yy in range(y, alto):
+                fundo = (yy - y) / max(1, alto - y)
+                cor = luz if virada and yy - y < 7 + (x % 3) else corpo
+                if yy - y < 3 and y < alto * 0.45:
+                    cor = cume                                      # so os picos altos
+                elif yy - y < 5 and y < alto * 0.3 and virada:
+                    cor = cume
+                # pontilhado da encosta e a nevoa embaixo
+                if cor is corpo and (x + yy * 2) % 7 == 0 and fundo < 0.6:
+                    cor = arte.escurecer(corpo, 0.18)
+                if fundo > 0.55:
+                    k = (fundo - 0.55) / 0.45
+                    cor = tuple(int(c + (n - c) * k * 0.8) for c, n in zip(cor, nevoa))
+                img.set_at((x, yy), cor)
+        return img
+
     @staticmethod
-    def _muralha(b, desloc, topo, cor, janela):
+    def _bruma(b, bruma, desloc, dy):
+        img, frac = bruma
+        x0 = -int(desloc) % PERIODO_BRUMA
+        y = int(H * frac + dy)
+        for x in range(x0 - PERIODO_BRUMA, W, PERIODO_BRUMA):
+            b.blit(img, (x, y))
+
+    @staticmethod
+    def _cadente(b, tempo, dy, regra, cor):
+        """Uma estrela cadente de vez em quando: um risco curto que se apaga na cauda."""
+        cada, dura = regra
+        n, t = divmod(tempo + cada * 0.6, cada)
+        if t > dura:
+            return
+        k = t / dura
+        x0 = 40 + (int(n) * 97) % (W - 110)
+        y0 = 8 + (int(n) * 41) % 34
+        x, y = x0 + k * 46, y0 + k * 17 + dy
+        for i in range(7):
+            if k * 46 - i * 2 < 0:
+                break
+            tom = tuple(max(0, c - i * 30) for c in cor)
+            b.fill(tom, (int(x - i * 2), int(y - i * 0.74), 2 if i < 2 else 1, 1))
+
+    def _baleia(self, b, cx, dy, tempo):
+        """
+        A baleia do ceu das ilhas: la longe, devagar, subindo e descendo. Cruza
+        a tela de tempos em tempos e passa a maior parte do tempo fora dela.
+        """
+        q = self.baleia[int(tempo * 1.2) % 2]
+        volta = W + 520
+        x = W + 30 - (tempo * 7.0 + cx * 0.05 + 60) % volta
+        if x > W or x < -q.get_width():
+            return
+        b.blit(q, (int(x), int(H * 0.40 + math.sin(tempo * 0.5) * 3 + dy)))
+
+    @staticmethod
+    def _revoada(b, cx, dy, tempo, cor):
+        """Passaros em V cruzando o ceu, devagar, batendo asa cada um no seu tempo."""
+        for n, (x0, y0, vel) in enumerate(((40, 0.30, 5.0), (230, 0.42, 3.5))):
+            lider = (x0 - tempo * vel - cx * 0.06) % (W + 80) - 40
+            for k, (dx, dyy) in enumerate(((0, 0), (5, 3), (10, 6), (6, -3), (12, -6))):
+                x, y = int(lider + dx), int(H * y0 + dyy + dy)
+                asa = int(tempo * 5 + k * 0.7 + n) % 2
+                b.fill(cor, (x, y, 1, 1))
+                b.fill(cor, (x - 1, y - 1 + asa, 1, 1))
+                b.fill(cor, (x + 1, y - 1 + asa, 1, 1))
+                if not asa:
+                    b.fill(cor, (x - 2, y - 2, 1, 1))
+                    b.fill(cor, (x + 2, y - 2, 1, 1))
+
+    def _morro(self, b, desloc, base, amp, freq, cor, capim):
+        """
+        A colina detalhada: faixas mais escuras que seguem o relevo para baixo
+        (a terra vai ficando funda), o cume aceso pela lua -- mais na encosta
+        virada para ela, a direita -- e, na de perto, tufos de capim no alto.
+        """
+        self._colinas(b, desloc, base, amp, freq, cor)
+        for desce, k in ((5, 0.12), (12, 0.24), (22, 0.36)):
+            escura = arte.escurecer(cor, k)
+            self._colinas(b, desloc, base + desce, amp, freq, escura)
+            # a borda de cada faixa e pontilhada: a passagem nao vira um degrau liso
+            for x in range(0, W, 2):
+                y = int(_altura(x + desloc, base + desce, amp, freq))
+                b.fill(escura, (x + (y % 2), y - 1, 1, 1))
+        luar = arte.clarear(cor, 0.35)
+        luar_forte = arte.clarear(cor, 0.6)
+        capim_cor = arte.clarear(cor, 0.45)
+        anterior = int(_altura(desloc - 1, base, amp, freq))
+        for x in range(W):
+            u = x + desloc
+            y = int(_altura(u, base, amp, freq))
+            # descendo para a direita, a encosta olha para a lua
+            b.fill(luar_forte if y > anterior else luar, (x, y, 1, 1))
+            anterior = y
+            if capim:
+                n = (int(u) * 2654435761 >> 7) & 31
+                if n < 4:
+                    b.fill(capim_cor, (x, y - 1 - (n & 1), 1, 1 + (n & 1)))   # um tufo
+                elif n == 4:
+                    b.fill(luar_forte, (x, y + 3, 1, 1))                      # uma pedrinha
+
+    _tijolos = {}
+
+    @classmethod
+    def _textura_muralha(cls, cor):
+        """Os tijolos do paredao, uma vez por cor: fiadas de 4 px, juntas a cada 8."""
+        t = cls._tijolos.get(cor)
+        if t is None:
+            t = cls._tijolos[cor] = pygame.Surface((W + 8, H))
+            t.fill(cor)
+            rejunte = arte.escurecer(cor, 0.22)
+            for y in range(0, H, 4):
+                t.fill(rejunte, (0, y, W + 8, 1))
+                for x in range(4 if (y // 4) % 2 else 0, W + 8, 8):
+                    t.fill(rejunte, (x, y + 1, 1, 3))
+            # o pe do paredao escurece em faixas
+            for i, y in enumerate(range(int(H * 0.8), H, 6)):
+                sombra = pygame.Surface((W + 8, 6))
+                sombra.fill((0, 0, 0))
+                sombra.set_alpha(30 + 18 * i)
+                t.blit(sombra, (0, y))
+        return t
+
+    @classmethod
+    def _muralha(cls, b, desloc, topo, cor, janela):
         """Paredao ate o pe da tela, com ameias no topo e umas janelas acesas."""
-        b.fill(cor, (0, topo, W, H - topo))
+        d0 = int(desloc)
+        b.blit(cls._textura_muralha(cor), (-(d0 % 8), topo), (0, 0, W + 8, H - topo))
+        b.fill(arte.clarear(cor, 0.25), (0, topo, W, 1))           # o parapeito aceso
         d = int(desloc)
         for x in range(-(d % 10), W, 10):
             b.fill(cor, (x, topo - 4, 6, 4))                      # as ameias
+            b.fill(arte.clarear(cor, 0.25), (x, topo - 4, 6, 1))  # com o alto aceso
+            b.fill(arte.escurecer(cor, 0.25), (x, topo - 3, 1, 3))
         luz = arte.escurecer(cor, 0.45)
         b.fill(luz, (0, topo + 2, W, 1))                          # a sombra do parapeito
         for x in range(-(d % 14), W, 14):
@@ -328,12 +691,24 @@ class Cenario:
         desloc = cx * parallax
         b.fill(cor_corpo, (0, base, W, H - base))
         periodo = W * 4
+        brilho = arte.clarear(cor_topo, 0.3)
         for x, r, subida in bolhas:
             sx = int((x - desloc) % periodo)
             for xx in (sx, sx - periodo):
                 if -r <= xx <= W + r:
-                    pygame.draw.circle(b, cor_topo, (xx, base - subida), r)
-                    pygame.draw.circle(b, cor_corpo, (xx, base - subida + 2), r)
+                    cy = base - subida
+                    pygame.draw.circle(b, cor_topo, (xx, cy), r)
+                    # a quina da bolha virada para o sol (a direita) pega mais luz
+                    pygame.draw.circle(b, brilho, (xx + r // 3, cy - r // 3), max(1, r // 3))
+                    pygame.draw.circle(b, cor_topo, (xx + r // 3 - 1, cy - r // 3 + 1), max(1, r // 3))
+                    pygame.draw.circle(b, cor_corpo, (xx, cy + 2), r)
+        # mais para baixo o mar fica mais denso e mais escuro, em faixas pontilhadas
+        for i, desce in enumerate((7, 13)):
+            escura = arte.escurecer(cor_corpo, 0.08 * (i + 1))
+            y = base + desce
+            b.fill(escura, (0, y + 1, W, H - y))
+            for xx in range(-(int(desloc) % 2), W, 2):
+                b.fill(escura, (xx, y, 1, 1))
 
     @staticmethod
     def _colinas(b, desloc, base, amp, freq, cor):

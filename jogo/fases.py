@@ -23,6 +23,8 @@ import bisect
 import math
 
 from .audio import TRILHAS
+from .simulacao import MOLA_ALTURA
+from .config import JOGADOR_TAM
 from .config import (TILE, LINHA_CHAO, TEMAS, ALPHA, FOLGA_CACO, PULO_MINIMO,
                      CORTE_PULO, JANELA_BOM)
 
@@ -51,6 +53,8 @@ COLUNAS = {"ilhas": (12, 55), "eclipse": (12, 65)}
 COLUNAS_PADRAO = (6, 100)
 # No bosque, no lugar das colunas: arvores e moitas, bem mais juntas -- e mata
 ARVOREDO = (5, 80)
+# enfeites miudos de qualquer mundo: (de quantas em quantas colunas, chance em %)
+ENFEITES = (4, 70)
 
 
 def perfil_padrao(quantidade, w=TILE, h=TILE, folga=FOLGA_CACO):
@@ -84,6 +88,7 @@ class Perigo:
         self.x, self.y, self.w, self.h = x, y, w, h
         self.quantidade = quantidade
         self.fatal = fatal
+        self.variante = 0         # qual dos desenhos da fase (mundo.preparar sorteia)
         self.perfil = perfil_padrao(quantidade, int(w), int(h))
 
     def colide(self, bx, by, bw, bh):
@@ -101,6 +106,7 @@ class Deco:
     def __init__(self, tipo, x, y, w, h, variante=0):
         self.tipo, self.x, self.y, self.w, self.h = tipo, x, y, w, h
         self.variante = variante      # qual dos desenhos da coluna, quando ha varios
+        self.ato = None               # a parte da musica em que ele esta (so os enfeites)
 
 
 class Fase:
@@ -141,11 +147,28 @@ class Fase:
         self.perigos = []
         self.col_perigos = {}     # tx -> [perigos naquela coluna]
         self.marcas = []          # [(x, y)] guias de "pule aqui"
+        self.saltos = []          # [(batida, x exato, y)] de onde sai cada pulo
+        self.brilhos = []         # [(x, y, alto?)] ecos para pegar no ar, em ordem de x
+        self.molas = []           # [(x inicial, x final, y do chao)] molas, em ordem de x
+        self.molas_x = []         # os x iniciais (para a busca)
+        self.orbes = []           # [(x, y, alcance x, alcance y)] orbes de pulo no ar
+        self.brilhos_extra = []   # os ecos do arco das molas
+        self.pontes = set()       # {(tx, ty)} passarelas no ar: so seguram quem vem de cima
+        self.dicas = []           # [(x, y, texto)] a 1a vez de cada mecanica, escrita no mundo
         self.decos = []
         self.acoes = []           # batidas em que o jogador precisa agir
         self.secoes = []          # [(nome, batida)]: introducao, A, B, A'
+        self.secoes_x = []        # o x em que cada parte comeca: os ATOS do mapa
         self.fim_x = 0.0
         self.duracao = 0.0
+
+    def ato(self, x):
+        """
+        Em qual parte da musica o ponto `x` do mapa esta (0 = introducao, 1 = A,
+        2 = B, 3 = A'). O mapa muda de cara junto com a musica: cada ato tem os
+        seus enfeites, os seus tipos de perigo e o seu clima no ceu.
+        """
+        return max(0, bisect.bisect_right(self.secoes_x, x) - 1)
 
     def vx_em(self, x):
         """Velocidade horizontal (px/s) de quem esta em `x`."""
@@ -190,6 +213,8 @@ class Construtor:
         self.s = fase.tiles_batida        # tiles por batida agora (muda nos portais)
         self._x0, self._b0 = 0.0, 0.0     # onde (tiles) e quando a velocidade mudou
         self._desceu = False              # o ultimo pulo desceu e o proximo vem logo
+        self._ditas = set()               # as mecanicas que ja ganharam legenda
+        self._eco = True                  # os pulos ganham eco no arco (nao nas rotas duplas)
         # na versao alpha o chao e uma RETA: degrau, buraco e ilha viram caco no
         # chao, descida vira chao -- nas mesmas batidas
         self.plano = fase.alpha
@@ -288,14 +313,85 @@ class Construtor:
         n = self.nivel if ty is None else ty
         self.f.perigos.append(Perigo(tx * TILE, (n - 1) * TILE, TILE, TILE, quantidade, fatal))
 
-    def marca(self, batida):
+    def marca(self, batida, eco=True, y=None):
         """Registra uma acao exigida e a guia visual na coluna dela."""
         self.f.acoes.append(round(batida, 3))
-        self.f.marcas.append((self.col(batida) * TILE, self.nivel * TILE))
+        self.f.marcas.append((self.col(batida) * TILE, self.nivel * TILE if y is None else y))
+        if eco and self._eco:
+            self.f.saltos.append((batida, self._x(batida) * TILE, self.nivel * TILE))
+
+    def _dica(self, chave, x, y, texto):
+        """A primeira vez de cada mecanica na fase ganha uma legenda no mundo."""
+        if chave not in self._ditas:
+            self._ditas.add(chave)
+            self.f.dicas.append((x, y, texto))
+
+    def _mola(self, batidas, opcao, atraso=0):
+        """
+        A MOLA: o pulo que sai dela e o salto grande -- 2 batidas no ar, o
+        dobro do comprimento (2L) e MOLA_ALTURA tiles de altura. O toque e na
+        batida, como em todo pulo; quem nao toca e lancado no fim da mola.
+
+            opcao None     por cima de uma torre de 3 blocos com um caco no alto
+            "vao"          por cima de um abismo largo (2L - 4 tiles)
+            -1 a -4        para o alto de um paredao dessa altura
+            "orbe"         a mola nao alcanca o paredao de 6 tiles: no alto do
+                           arco ha um ORBE, e o toque nele (uma batida depois
+                           da mola) e um pulo novo, no ar, que chega la
+        """
+        f, L, n = self.f, self.L, self.nivel
+        if batidas < 2 * f.batidas_pulo - 1e-9:
+            raise ValueError(f"'mola' com {batidas} batidas na batida {self.b}: o salto dura "
+                             f"{2 * f.batidas_pulo}")
+        j, fim = self.col(self.b), self.col(self.b + batidas)
+        x = self._x(self.b) * TILE
+        chao = n * TILE
+        self._dica("mola", x, chao - 2.2 * TILE, "MOLA: TOQUE NA BATIDA")
+        if opcao == "orbe":
+            self._dica("orbe", x + L * TILE, chao - (MOLA_ALTURA + 1.6) * TILE, "ORBE: TOQUE NO AR")
+        self.marca(self.b, eco=False)
+        # a mola vai de onde sai quem toca adiantado ate um pouco depois de
+        # onde sai quem toca atrasado
+        # (`atraso`: quem vem de um degrau abaixo pousa 1 tile mais longe)
+        f.molas.append((x - (self.janela + 0.15) * TILE,
+                        x + (self.janela + 0.25 + atraso) * TILE, chao))
+        arco = lambda k: MOLA_ALTURA * (1.0 - (k - 1.0) ** 2)     # altura a k*L da saida
+        ecos = [0.5, 1.0, 1.5]
+        if opcao is None:
+            self.piso(j, fim)
+            for k in range(3):
+                self.bloco(j + L, n - 1 - k)
+            self.caco(j + L, n - 3)
+            ecos = [0.5, 1.5]
+        elif opcao == "vao":
+            self.piso(j, j + 2 + atraso)
+            self._fosso(j + 2 + atraso, j + 2 * L - 2, n + 3)
+            self.piso(j + 2 * L - 2, fim)
+        elif opcao == "orbe":
+            face = j + L + L // 2
+            self.piso(j, face)
+            self.nivel -= 6
+            self.piso(face, fim)
+            alcance = (self.janela + 0.25) * TILE
+            f.orbes.append((x + L * TILE + JOGADOR_TAM * 0.5,
+                            chao - MOLA_ALTURA * TILE - JOGADOR_TAM * 0.5, alcance, 1.35 * TILE))
+            self.marca(self.b + f.batidas_pulo, eco=False, y=chao - (MOLA_ALTURA - 1.5) * TILE)
+            ecos = [0.5]
+            f.brilhos_extra.append((x + 1.5 * L * TILE, chao - (MOLA_ALTURA + 3.5) * TILE, True))
+        else:
+            face = j + L + 2
+            self.piso(j, face)
+            self.nivel += opcao
+            self.piso(face, fim)
+            ecos = [0.5, 1.0]
+        for k in ecos:
+            f.brilhos_extra.append((x + k * L * TILE, chao - arco(k) * TILE, True))
+        self.b += batidas
 
     def secao(self, nome):
         """Marca onde comeca uma parte da musica (introducao, A, B, A')."""
         self.f.secoes.append((nome, self.b))
+        self.f.secoes_x.append(self.col(self.b) * TILE)
         return self
 
     # ----------------------------------------------------------------- frase
@@ -311,6 +407,8 @@ class Construtor:
             "ilha"   o mesmo fosso, e a outra margem mais alta (opcao
                      -1 ou -2 tiles) ou mais baixa (+1, +2)             pulo
             "sobe"   degrau para cima; opcao: 1 ou 2 tiles              pulo
+            "mola"   o salto grande, de 2 batidas (veja `_mola`); opcao:
+                     nada (torre alta), "vao", -1 a -4 (paredao), "orbe" pulo
             "desce"  degrau para baixo, logo no comeco; opcao: tiles    de graca
             "pausa"  chao plano                                         de graca
 
@@ -327,6 +425,12 @@ class Construtor:
         for passo in passos:
             tipo, batidas = passo[0], passo[1]
             opcao = passo[2] if len(passo) > 2 else None
+            if tipo == "mola" and not self.plano:
+                self._mola(batidas, opcao, 1 if self._desceu else 0)
+                self._desceu = False
+                continue
+            if tipo == "mola":
+                tipo, opcao = "caco", None
             if self.plano and tipo in ("sobe", "desce", "ilha", "vao"):
                 tipo, opcao = {"sobe": "caco", "desce": "pausa", "ilha": "caco", "vao": "caco"}[tipo], None
             pula = tipo not in ("pausa", "desce")
@@ -375,6 +479,52 @@ class Construtor:
         self.abrir(c0, c1)
         for tx in range(c0, c1):
             self.caco(tx, ty, fatal=True)
+
+    def dupla(self, *passos, altura=2):
+        """
+        DOIS CAMINHOS: a frase `passos` (so "caco", "torre" e "pausa", e
+        terminando numa pausa) corre no chao, e por cima dela, `altura` tiles
+        acima, vai uma PASSARELA feita de pedacos, com um vao sob o alto de
+        cada pulo. Sobe-se segurando o botao: o pulo inteiro atravessa a
+        passarela por baixo e pousa nela; o toque rapido passa por baixo e
+        segue pelo chao. La em cima os pulos sao nas mesmas batidas, de pedaco
+        em pedaco; quem perde um pulo cai de volta ao chao. Os ecos se dividem
+        entre os dois caminhos. No fim a passarela acaba e o Leo desce sozinho.
+        """
+        if self.plano:
+            return self.frase(*passos)
+        f = self.f
+        if passos[-1][0] != "pausa" or any(p[0] not in ("caco", "torre", "pausa") for p in passos):
+            raise ValueError("dupla: so caco, torre e pausa, terminando em pausa")
+        saltos, b = [], self.b
+        for p in passos:
+            if p[0] != "pausa":
+                saltos.append((self.col(b), self._x(b) * TILE))
+            b += p[1]
+        topo = self.nivel - altura
+        if not f.so_toques:
+            self._dica("dupla", saltos[0][1] + self.L * TILE * 0.5, (topo - 1.6) * TILE,
+                       "SEGURE: CAMINHO DE CIMA")
+        self._eco = False
+        self.frase(*passos)
+        self._eco = True
+        vaos = set()
+        for j, _ in saltos[1:]:
+            vaos.update(range(j + self.beira, j + self.pouso))
+        for tx in range(saltos[0][0] + self.pouso, saltos[-1][0] + self.L + 2):
+            if tx not in vaos:
+                f.pontes.add((tx, topo))
+        # os ecos se dividem: em cima (o caminho seguro), um a cada dois pulos;
+        # embaixo (o dos perigos), um eco baixo em todo pulo -- cada caminho
+        # paga do seu jeito, e segurar sempre deixa de ser a melhor escolha
+        for k, (j, x) in enumerate(saltos[1:]):
+            if k % 2 == 0 or f.so_toques:
+                f.brilhos_extra.append((x + self.L * TILE * 0.5,
+                                        topo * TILE - f.altura_pulo, True))
+        for j, x in () if f.so_toques else saltos:
+            f.brilhos_extra.append((x + self.L * TILE * 0.5,
+                                    self.nivel * TILE - f.altura_pulo * PULO_MINIMO, False))
+        return self
 
     # --------------------------------------------------------------- trechos
     def _repetir(self, tipo, batidas, intervalo, opcao=None):
@@ -455,13 +605,43 @@ class Construtor:
         f.duracao = self.b * f.dur_batida
         f.acoes.sort()
         f.celulas_bloco = set(f.blocos)
+        f.pontes_col = {}
+        for tx, ty in f.pontes:
+            f.pontes_col.setdefault(tx, []).append(ty)
+        f.molas.sort()
+        f.molas_x = [m[0] for m in f.molas]
         for p in f.perigos:
             f.col_perigos.setdefault(int(p.x // TILE), []).append(p)
         # o portal de volta e so cenario: solido, mataria o jogador na chegada
         f.decos.append(Deco("portal", c1 * TILE, (self.nivel - 4) * TILE,
                             TILE * 2, TILE * 4))
+        self._brilhos()
         self._decorar()
         return f
+
+    def _brilhos(self):
+        """
+        Os ECOS: brilhos soltos no ar, no alto do arco de um pulo. Sao a
+        escolha do jogador dentro do ritmo: o eco ALTO so pega quem segura o
+        botao (o pulo inteiro), o BAIXO so quem da o toque rapido -- e nenhum
+        dos dois e obrigatorio, valem pontos. Vem em frases de dois compassos
+        (altos, baixos, altos, nada, baixos), para se ler como uma melodia.
+        No mundo so de toques o pulo e sempre o inteiro: la sao todos altos.
+        """
+        f = self.f
+        if f.alpha:
+            return
+        desenho = ("alto", "baixo", "alto", None, "baixo")
+        for batida, x, y in f.saltos:
+            tipo = desenho[(int(batida // 8) + f.ident) % len(desenho)]
+            if tipo is None:
+                continue
+            alto = tipo == "alto" or f.so_toques
+            meio = f.vx_em(x + 1.0) * f.duracao_pulo * 0.5
+            sobe = f.altura_pulo * (1.0 if alto else PULO_MINIMO)
+            f.brilhos.append((x + meio, y - sobe, alto))
+        f.brilhos.extend(f.brilhos_extra)
+        f.brilhos.sort()
 
     def _decorar(self):
         """
@@ -477,6 +657,13 @@ class Construtor:
                      for k in range(int(d.w // TILE))}
         # nem atravessando um bloco solto
         ocupadas |= {tx for tx, _ in f.blocos}
+        # ...nem perto de nada que o jogador precisa LER: perigo no chao, bloco,
+        # e mola ficam com 2 tiles limpos de cada lado
+        ler = {int(p.x // TILE) for p in f.perigos if not p.fatal}
+        ler |= {tx for tx, _ in f.blocos}
+        ler |= {int(a // TILE) + k for a, b, _ in f.molas for k in range(int((b - a) // TILE) + 2)}
+        ocupadas |= {tx + k for tx in ler for k in range(-2, 3)}
+        ocupadas |= {tx for tx, _ in f.pontes}        # nada atravessando uma passarela
         for tx, n in f.chao_col.items():
             plano = f.chao_col.get(tx - 1) == n == f.chao_col.get(tx + 1)
             sorteio = (tx * 2654435761 >> 7) % 100        # fixo por coluna
@@ -487,9 +674,19 @@ class Construtor:
                     f.decos.append(Deco("arvore", (tx - 1) * TILE, (n - 4) * TILE, 3 * TILE,
                                         4 * TILE, variante=sorteio % 7))
                     continue
-                alt = TILE * (2 + tx % 2)
-                f.decos.append(Deco("coluna", tx * TILE, n * TILE - alt, TILE, alt,
-                                    variante=tx // espaco))
+                # (as colunas de pedra sairam do caminho: de pe na linha do chao,
+                # liam-se como obstaculo. Ficam so os enfeites miudos, abaixo.)
+        # os enfeites miudos (lampiao, tocha, ruina...): noutra cadencia, no chao
+        # plano que sobrou, nunca colados numa coluna ou arvore
+        tomadas = {int(d.x // TILE) + k for d in f.decos for k in range(max(1, int(d.w // TILE)))}
+        for tx, n in f.chao_col.items():
+            plano = f.chao_col.get(tx - 1) == n == f.chao_col.get(tx + 1)
+            sorteio = (tx * 2246822519 >> 9) % 100
+            if (tx % ENFEITES[0] == 1 and plano and tx not in ocupadas and tx not in tomadas
+                    and sorteio < ENFEITES[1]):
+                f.decos.append(Deco("enfeite", tx * TILE, (n - 2) * TILE, TILE, 2 * TILE,
+                                    variante=(tx * 40503 >> 4) % 97))
+                f.decos[-1].ato = f.ato(tx * TILE)
 
 
 # ---------------------------------------------------------------- partituras
@@ -516,9 +713,8 @@ def _fase1():
     c.secao("A")
     c.frase(("caco", 2), ("torre", 2))
     c.colina(2, ("caco", 2), ("caco", 2))
-    c.vaos(4)
-    c.descanso(2)
-    c.frase(("caco", 2), ("torre", 2), ("caco", 2, 2), ("pausa", 2))
+    c.frase(("mola", 4), ("pausa", 2))             # a primeira mola: por cima do tronco alto
+    c.dupla(("caco", 2), ("torre", 2), ("caco", 2, 2), ("pausa", 2))   # a ponte de troncos
     c.frase(("vao", 2), ("caco", 2), ("vao", 2), ("caco", 2, 2))
     c.frase(("vao", 2), ("vao", 2), ("pausa", 2))  # a primeira ravina, pedra a pedra
     c.frase(("caco", 2))
@@ -529,10 +725,12 @@ def _fase1():
     c.secao("B")
     c.descanso(4)
     c.frase(("vao", 4), ("vao", 4))
-    c.cacos(12, intervalo=4)
-    c.frase(("caco", 4), ("torre", 4))
-    c.frase(("vao", 4), ("caco", 4), ("vao", 4), ("caco", 4, 2))
-    c.frase(("torre", 4), ("caco", 4), ("vao", 4), ("pausa", 4))
+    # a serra: a quebra da musica sobe o morro devagar, cruza a ravina la no
+    # alto e desce do outro lado -- os mesmos saltos largos, noutro relevo
+    c.frase(("mola", 4, -3), ("caco", 4), ("sobe", 4))     # a mola sobe o paredao
+    c.frase(("ilha", 4, -1), ("torre", 4))
+    c.frase(("vao", 4), ("caco", 4), ("ilha", 4, 1), ("caco", 4, 2))
+    c.frase(("torre", 4), ("ilha", 4, 1), ("vao", 4), ("desce", 1, 3), ("pausa", 3))
     # PARTE A' (35-50, o grave de novo): a colina e o riacho, mais altos e mais juntos
     c.secao("A'")
     c.colina(3, ("caco", 2, 2), ("torre", 2))
@@ -542,9 +740,11 @@ def _fase1():
     c.frase(("caco", 2))
     c.zigue_zague(2)
     c.cacos(6, intervalo=1)
-    c.descanso(2)
+    c.descanso(1)
+    c.velocidade(8)                                # o portal dourado: a corrida para casa
+    c.descanso(1)
     c.frase(("caco", 2), ("vao", 2), ("caco", 2, 2), ("vao", 2))
-    c.cacos(8)
+    c.frase(("mola", 4, "vao"), ("caco", 2), ("caco", 2))  # o grande salto sobre o rio
     c.descanso(4)
     return c.fim(6)
 
@@ -567,7 +767,8 @@ def _fase2():
     # batidas, depois a cada batida
     c.secao("introducao")
     c.descanso(2)
-    c.ilhas((0, -1, 0, 1, 0, -1))
+    c.ilhas((0, -1, 0, 1))
+    c.frase(("mola", 4, "vao"))                    # a mola de vento: a ilha distante
     c.frase(*_saltos(0, -1, 1, 0))
     c.frase(("ilha", 1.5, -1), ("ilha", 1.5, 1), ("ilha", 1, 0))
     c.frase(*_saltos(0, 0, -1, 1, 0, 0), ("ilha", 2, 0))
@@ -586,7 +787,7 @@ def _fase2():
     c.frase(("ilha", 1, -1), ("caco", 1), ("caco", 1, 2), *_saltos(-1, 1, 1), ("ilha", 2, 0))
     c.frase(("ilha", 1.5, -1), ("ilha", 1.5, 1), ("ilha", 1, 0),
             ("ilha", 1.5, -1), ("ilha", 1.5, 1), ("ilha", 1, 0))
-    c.frase(*_saltos(0, -1, 0), ("ilha", 2, 1), ("ilha", 2, 0))
+    c.frase(*_saltos(0, -1, 0), ("mola", 4, "vao"))
     c.velocidade(6)                                # o azul: de volta ao normal
     c.descanso(1)
     # (32-39) o balanco depois do drop: sem folga
@@ -595,14 +796,15 @@ def _fase2():
             ("ilha", 1, 0))
     c.frase(("ilha", 1.5, 0), ("ilha", 1.5, -1), ("ilha", 1, 0),
             ("ilha", 1.5, 1), ("ilha", 1.5, 0), ("ilha", 1, 0))
-    c.frase(("ilha", 1, -1), *_saltos(0, 1, 0), ("caco", 1), ("caco", 1, 2), ("caco", 1),
-            ("pausa", 1))
+    c.frase(("ilha", 1, -1), *_saltos(0, 1, 0))
+    c.dupla(("caco", 1), ("caco", 1, 2), ("caco", 1), ("pausa", 1))    # as lajes no ar
     # PARTE B (40-47, a quebra): o ritmo quebrado entre ilhas altas, e a
     # subida que prepara o segundo drop
     c.secao("B")
     c.frase(("ilha", 1.5, -1), ("ilha", 1.5, 0), ("ilha", 1, 1),
             ("ilha", 1.5, -1), ("ilha", 1.5, 0), ("ilha", 1, 1))
-    c.frase(("ilha", 2.5, -1), ("ilha", 2.5, 1), ("ilha", 1, 0), ("ilha", 2, -1))
+    # a ilha mais alta: a mola nao chega, o ORBE no alto do arco leva ate la
+    c.frase(("mola", 3, "orbe"), ("desce", 1, 3), ("pausa", 1), ("desce", 1, 3), ("ilha", 2, 0))
     c.frase(*_saltos(1, 0), ("caco", 1, 2), ("ilha", 1, 0), ("ilha", 1.5, -1), ("ilha", 1.5, 1),
             ("ilha", 1, 0))
     c.frase(*_saltos(0, 0, -1, 1, 0, 0))
@@ -623,14 +825,15 @@ def _fase2():
             ("ilha", 1, 0))
     c.frase(("caco", 1), ("ilha", 1, -1), ("caco", 1), ("ilha", 1, 0),
             ("caco", 1, 2), ("ilha", 1, 1), ("ilha", 1, 0), ("caco", 1, 3))
-    c.frase(("ilha", 1, -1), *_saltos(0, 1, 0), ("ilha", 3, 0))
+    c.frase(("ilha", 1, -1), *_saltos(0, 1, 0), ("mola", 3, "vao"))
     c.velocidade(6)
     c.descanso(1)
     # (64-69) o fim da faixa, na velocidade normal
     c.frase(*_saltos(0, -1, 1, 0), ("caco", 1), ("caco", 1, 2), ("caco", 1, 3), ("ilha", 1, 0))
     c.frase(("ilha", 1.5, -1), ("ilha", 1.5, 0), ("ilha", 1, 0), ("ilha", 1, -1),
             *_saltos(0, 1, 0))
-    c.frase(*_saltos(0, 0, 1, 0), ("caco", 2, 3), ("pausa", 2))
+    c.frase(*_saltos(0, 0, 1, 0))
+    c.dupla(("caco", 1, 3), ("caco", 1), ("pausa", 2))
     return c.fim(6)
 
 
@@ -646,7 +849,7 @@ def _fase3():
     # fora; o ritmo aperta ate o drop
     c.secao("introducao")
     c.descanso(2)
-    c.torres(8)
+    c.frase(("torre", 2), ("torre", 2), ("mola", 4))       # a torre de vigia: so a mola passa
     c.subir(4)
     c.frase(("caco", 1), ("caco", 1), ("torre", 1), ("caco", 1, 2), ("caco", 1), ("torre", 1),
             ("pausa", 2))
@@ -669,7 +872,7 @@ def _fase3():
     c.sincopado(12, quantidade=2)
     c.frase(("vao", 1), ("vao", 1), ("caco", 1, 2), ("vao", 1), ("vao", 1), ("caco", 1, 3),
             ("vao", 1), ("vao", 1))
-    c.subir(4, intervalo=1)
+    c.frase(("mola", 2, -4), ("pausa", 2))         # a muralha de uma vez, pela mola
     c.torres(4, intervalo=1)
     c.frase(("caco", 1, 3), ("sobe", 1), ("caco", 1, 2), ("sobe", 1), ("caco", 1))
     c.descer(6)
@@ -677,13 +880,15 @@ def _fase3():
     c.zigue_zague(4, intervalo=1)
     c.descanso(2)
     c.sincopado(12, quantidade=2)
-    c.frase(("vao", 1), ("vao", 1), ("vao", 1), ("vao", 1), ("vao", 2), ("vao", 2))
-    c.descanso(2)
+    c.frase(("vao", 1), ("vao", 1), ("vao", 1), ("vao", 1), ("mola", 4, "vao"))
+    c.descanso(1)
+    c.velocidade(5)                                # o portal azul: a quebra anda devagar
+    c.descanso(1)
     # PARTE B (64-79, a quebra): os fossos em fila e a torre de menagem
     c.secao("B")
     c.frase(("vao", 1), ("vao", 1), ("caco", 1, 2), ("vao", 1), ("vao", 1), ("caco", 1, 3),
             ("vao", 1), ("vao", 1), ("pausa", 2))
-    c.frase(("caco", 1), ("caco", 1, 2), ("caco", 1), ("caco", 1, 3), ("pausa", 2))
+    c.dupla(("caco", 1), ("caco", 1, 2), ("caco", 1), ("caco", 1, 3), ("pausa", 2))   # o adarve
     c.frase(("sobe", 1), ("caco", 1), ("sobe", 1), ("caco", 1, 2), ("desce", 1),
             ("desce", 1), ("vao", 1), ("vao", 1), ("pausa", 2))
     c.frase(("caco", 1), ("caco", 1), ("caco", 1, 2), ("caco", 1), ("caco", 1.5), ("caco", 1.5),
@@ -692,14 +897,16 @@ def _fase3():
     c.descanso(2)
     c.frase(("vao", 1), ("caco", 1, 2), ("vao", 1), ("caco", 1, 3), ("vao", 1), ("vao", 1),
             ("pausa", 2))
-    c.frase(("sobe", 1), ("sobe", 1), ("caco", 1, 2), ("caco", 1), ("sobe", 2),
-            ("caco", 2, 3))
-    c.descer(3)
-    c.descanso(3)
+    # a torre de menagem: mola, e o ORBE no alto do arco para chegar ao topo
+    c.frase(("sobe", 1), ("caco", 1, 2), ("caco", 1), ("mola", 3, "orbe"), ("pausa", 2))
+    c.frase(("desce", 1, 4), ("desce", 1, 3), ("pausa", 1))        # e o salto la de cima
+    c.descanso(1)
+    c.velocidade(7)                                # de volta a corrida da cidadela
+    c.descanso(2)
     # PARTE A' (80-103, o ultimo drop e o fim da faixa): tudo de novo, mais
     # alto e mais junto, ate o portal de casa
     c.secao("A'")
-    c.cacos(8, intervalo=1, quantidade=2)
+    c.dupla(*[("caco", 1, 2)] * 6, ("pausa", 2))   # por baixo, as lancas; por cima, o adarve
     c.frase(("sobe", 1), ("sobe", 1), ("sobe", 1), ("caco", 1), ("sobe", 1), ("caco", 1, 2),
             ("pausa", 2))
     c.torres(8, intervalo=1)
@@ -714,10 +921,11 @@ def _fase3():
     c.torres(6, intervalo=1)
     c.frase(("caco", 1, 3), ("caco", 1, 3), ("sobe", 1), ("caco", 1), ("caco", 1, 2))
     c.descer(3)
+    c.velocidade(8)                                # o eclipse total: a corrida final
     c.descanso(1)
     c.cacos(8, intervalo=1, quantidade=2)
     c.zigue_zague(2, intervalo=1)
-    c.frase(("vao", 1), ("caco", 1), ("vao", 1), ("caco", 1, 2), ("vao", 1))
+    c.frase(("vao", 1), ("caco", 1), ("mola", 3, "vao"))   # o ultimo salto, sobre o fosso todo
     return c.fim(8)
 
 

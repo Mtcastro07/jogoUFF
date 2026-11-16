@@ -20,7 +20,7 @@ from .config import DIR_MUSICA, DIR_SFX, VOLUME_MUSICA, VOLUME_SFX
 
 AVISO_NCS = "Music provided by NoCopyrightSounds - ncs.io"
 EFEITOS = ("pulo", "perfeito", "bom", "erro", "quebra",
-           "vitoria", "morte", "clique", "navegar")
+           "vitoria", "morte", "clique", "navegar", "mola", "orbe", "eco")
 
 
 class Trilha:
@@ -69,6 +69,19 @@ class Audio:
         self.ligado = False
         self.sons = {}
         self.tocando = False
+        self.vol_musica = 1.0     # 0..1, da tela de opcoes (multiplica o volume da config)
+        self.vol_sfx = 1.0
+        self.atraso = 0.0         # segundos que o som demora a chegar ao ouvido
+
+    def aplicar(self, opcoes):
+        """Poe em uso as opcoes do jogador (save.opcoes): volumes e atraso do audio."""
+        self.vol_musica = opcoes["musica"] / 10.0
+        self.vol_sfx = opcoes["sfx"] / 10.0
+        self.atraso = opcoes["atraso"] / 1000.0
+        for som in self.sons.values():
+            som.set_volume(VOLUME_SFX * self.vol_sfx * 100)
+        if self.ligado:
+            pygame.mixer.music.set_volume(VOLUME_MUSICA * self.vol_musica)
 
     def iniciar(self):
         try:
@@ -78,8 +91,11 @@ class Audio:
             print(f"[audio] sem mixer ({erro}); o jogo roda em silencio")
             return
         for nome in EFEITOS:
-            som = Sound(os.path.join(DIR_SFX, f"{nome}.wav"))
-            som.set_volume(VOLUME_SFX * 100)
+            caminho = os.path.join(DIR_SFX, f"{nome}.wav")
+            if not os.path.exists(caminho):
+                continue
+            som = Sound(caminho)
+            som.set_volume(VOLUME_SFX * self.vol_sfx * 100)
             self.sons[nome] = som
 
     def tocar(self, nome):
@@ -93,8 +109,10 @@ class Audio:
         if not self.ligado or not os.path.exists(caminho):
             return
         pygame.mixer.music.load(caminho)
-        pygame.mixer.music.set_volume(VOLUME_MUSICA)
-        pygame.mixer.music.play(start=TRILHAS[cancao].inicio)
+        pygame.mixer.music.set_volume(VOLUME_MUSICA * self.vol_musica)
+        # com o som chegando atrasado (fone sem fio, TV), a faixa entra adiantada
+        # o mesmo tanto: o que se OUVE cai em cima do que se ve
+        pygame.mixer.music.play(start=max(0.0, TRILHAS[cancao].inicio + self.atraso))
         self.tocando = True
 
     def parar_musica(self):

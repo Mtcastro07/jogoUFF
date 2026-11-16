@@ -635,11 +635,30 @@ ESTILO = {"bosque": _desenhar_bosque, "ilhas": _desenhar_coluna, "eclipse": _des
 PREENCHER = {"bosque": (FUNDO_BOSQUE, PROFUNDO_BOSQUE), "eclipse": (FUNDO_CIDADELA, PROFUNDO)}
 
 
+FORCA_CLIMA = 0.55     # o chao pega o clima do ceu pela metade: a linha que o olho segue fica
+
+
+def _no_clima(s, fase, tx):
+    """
+    Tinge a coluna com o clima do ato em que ela esta (cenario.clima), mais
+    fraco que no ceu. E feito uma vez, quando a coluna e desenhada: de graca.
+    """
+    from .cenario import clima
+    c = clima(fase, (tx + 0.5) * TILE)
+    if not c:
+        return s
+    mult = tuple(int(255 - (255 - m) * FORCA_CLIMA) for m in c[0])
+    soma = tuple(int(a * FORCA_CLIMA * 0.6) for a in c[1])
+    s.fill(mult, special_flags=pygame.BLEND_RGB_MULT)
+    s.fill(soma, special_flags=pygame.BLEND_RGB_ADD)
+    return s
+
+
 def coluna(fase, tx):
     chave = (fase.ident, tx)
     s = _colunas.get(chave)
     if s is None:
-        s = _colunas[chave] = ESTILO[fase.cancao](fase, tx)
+        s = _colunas[chave] = _no_clima(ESTILO[fase.cancao](fase, tx), fase, tx)
         if len(_colunas) > GUARDA:
             _colunas.popitem(last=False)
     else:

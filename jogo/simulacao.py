@@ -25,11 +25,14 @@ as pernas encolhidas quando ele esta no ar -- e o DESENHO de cada caco, ponta
 por ponta. Quem pousa rente a quina de um degrau sobe nele em vez de bater.
 """
 
+import bisect
 import math
 
 from .config import (PASSO_FISICA, TILE, JOGADOR_TAM, LARGURA_APOIO, CORPO_LARGURA,
                      CORPO_ALTURA, CORPO_FRENTE, FOLGA_PE, FOLGA_PE_AR, QUINA, PULO_MINIMO,
                      CORTE_PULO, COYOTE, BUFFER_PULO, VIDAS, INVULNERAVEL)
+
+MOLA_ALTURA = 6.0     # tiles que o salto da mola sobe (o pulo comum sobe 3,5)
 
 APOIO = (JOGADOR_TAM - LARGURA_APOIO) * 0.5     # onde a sola comeca, dentro da caixa
 
@@ -65,6 +68,8 @@ class Estado:
         self.pousou = False
         self.pouso = -1.0         # instante do ultimo pouso (a arte mostra o pe tocando o chao)
         self.pulo = -1.0          # instante do ultimo pulo (a arte estica o corpo na saida)
+        self.impulso = None       # "mola" ou "orbe" quando o pulo deste passo foi um deles
+        self.orbes = set()        # indices dos orbes ja usados nesta tentativa
 
 
 def _colunas(x):
@@ -89,6 +94,23 @@ def corpo(est):
     folga = FOLGA_PE if est.no_chao else FOLGA_PE_AR
     y = est.y + JOGADOR_TAM - folga - CORPO_ALTURA
     return x, y, CORPO_LARGURA, CORPO_ALTURA
+
+
+def _mola(fase, est):
+    """A mola (x inicial, x final) sob o Leo, ou None."""
+    i = bisect.bisect_right(fase.molas_x, est.x) - 1
+    if i >= 0 and est.x < fase.molas[i][1]:
+        return fase.molas[i]
+    return None
+
+
+def _orbe(fase, est):
+    """O indice do orbe ainda nao usado ao alcance do Leo (o centro dele), ou None."""
+    cx, cy = est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM * 0.5
+    for i, (ox, oy, rx, ry) in enumerate(fase.orbes):
+        if i not in est.orbes and abs(ox - cx) <= rx and abs(oy - cy) <= ry:
+            return i
+    return None
 
 
 def _livre(fase, est, x, y):
@@ -169,7 +191,7 @@ def passo(fase, est, pressionado, apertou, repetir=False, dt=PASSO_FISICA):
     if not est.vivo or est.venceu:
         return
     est.tempo += dt
-    est.acao = est.dano = est.quebrou = None
+    est.acao = est.dano = est.quebrou = est.impulso = None
     est.repetido = est.pousou = False
     est.invuln = max(0.0, est.invuln - dt)
     est.coyote = max(0.0, est.coyote - dt)
@@ -216,13 +238,17 @@ def passo(fase, est, pressionado, apertou, repetir=False, dt=PASSO_FISICA):
 
     # gravidade e colisao vertical com o que e solido
     est.vy = min(est.vy + est.gravidade * dt, fase.v_pulo * 1.5)
+    y_antes = est.y
     est.y += est.vy * dt
     estava_no_chao = est.no_chao
     est.no_chao = False
     c0, c1 = _colunas(est.x)
     if est.vy > 0.0:
         ty = int((est.y + JOGADOR_TAM - 0.001) // TILE)
-        if _solido(fase, est, c0, ty) or _solido(fase, est, c1, ty):
+        # a PASSARELA so segura quem vem de cima: por baixo e pelos lados, passa-se
+        if (_solido(fase, est, c0, ty) or _solido(fase, est, c1, ty) or
+                (((c0, ty) in fase.pontes or (c1, ty) in fase.pontes) and
+                 y_antes + JOGADOR_TAM <= ty * TILE + 0.5)):
             est.y = ty * TILE - JOGADOR_TAM
             est.vy = 0.0
             est.no_chao = True
@@ -265,14 +291,38 @@ def passo(fase, est, pressionado, apertou, repetir=False, dt=PASSO_FISICA):
     repetir = repetir and not fase.so_toques
     # Toque guardado no ar: o pulo sai agora, encurtado para pousar no tempo
     # do toque -- a mesma altura, em menos tempo (ate 30% mais curto).
-    if (not est.preso and (est.buffer > 0.0 or repetir) and
+    # A MOLA: o pulo que sai de cima dela e o salto grande (MOLA_ALTURA de
+    # altura, o dobro do tempo e do comprimento) -- e quem chega ao fim da mola
+    # sem tocar e lancado do mesmo jeito: ninguem passa reto por ela.
+    mola = _mola(fase, est) if est.no_chao or est.coyote > 0.0 else None
+    lancado = (mola is not None and est.no_chao and
+               est.x + fase.vx_em(est.x) * dt >= mola[1])
+    # O ORBE: um toque NO AR, perto dele, e um pulo novo dali mesmo.
+    orbe = None
+    if not est.no_chao and est.coyote <= 0.0 and est.buffer > 0.0 and not est.preso:
+        orbe = _orbe(fase, est)
+    if orbe is not None:
+        est.orbes.add(orbe)
+        est.gravidade = fase.gravidade
+        est.vy = -fase.v_pulo
+        est.pulando, est.cortou = False, True          # sempre o pulo inteiro
+        est.buffer = 0.0
+        est.acao, est.impulso = "pulo", "orbe"
+        est.pulo = est.tempo
+    elif (not est.preso and (est.buffer > 0.0 or repetir or lancado) and
             (est.no_chao or est.coyote > 0.0)):
         atraso = min(est.tempo - est.toque, 0.3 * fase.duracao_pulo) if est.buffer > 0.0 else 0.0
         duracao = fase.duracao_pulo - max(0.0, atraso)
-        est.gravidade = 8.0 * fase.altura_pulo / duracao ** 2
-        est.vy = -4.0 * fase.altura_pulo / duracao
-        est.repetido = est.buffer <= 0.0
-        est.pulando, est.y_saida, est.cortou = True, est.y, False
+        altura = fase.altura_pulo
+        if mola is not None:
+            duracao = 2.0 * fase.duracao_pulo - max(0.0, atraso)
+            altura = MOLA_ALTURA * TILE
+            est.impulso = "mola"
+        est.gravidade = 8.0 * altura / duracao ** 2
+        est.vy = -4.0 * altura / duracao
+        est.repetido = est.buffer <= 0.0 and not lancado
+        # o salto da mola nao se encurta soltando o botao: e sempre o inteiro
+        est.pulando, est.y_saida, est.cortou = mola is None, est.y, mola is not None
         est.fim_pulo = est.tempo + duracao
         est.no_chao = False
         est.coyote = 0.0

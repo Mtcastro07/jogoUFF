@@ -210,18 +210,64 @@ VAGUEIA_AR = {"bosque": 13.0}
 HALO_AR = {"bosque": (46, 92, 58)}
 
 
+# O que entra no ar em cada ATO (fase.ato), por cima do ar do mundo:
+# mundo -> {ato: (quantas, cor, cor clara, velocidade x, velocidade y, balanco)}
+AR_DO_ATO = {
+    # nas ruinas as folhas caem; na aurora, esporos de luz sobem do chao
+    "bosque": {2: (34, (74, 120, 88), (150, 200, 120), -34.0, 44.0, 30.0),
+               3: (30, (150, 255, 200), (226, 255, 240), 6.0, -16.0, 26.0)},
+    # no crepusculo, ciscos de gelo; no ultimo clarao, petalas douradas no vento
+    "ilhas": {2: (34, (150, 226, 255), (240, 250, 255), -12.0, -8.0, 18.0),
+              3: (40, (255, 214, 150), (255, 244, 214), -60.0, 14.0, 14.0)},
+    # o eclipse sangrando chove brasa; no final, cinza fria caindo devagar
+    "eclipse": {2: (60, (255, 128, 96), (255, 220, 150), -16.0, -64.0, 12.0),
+                3: (40, (150, 160, 220), (226, 230, 255), -8.0, 26.0, 16.0)},
+}
+
+
+class Ecos:
+    """
+    O eco de um acerto PERFEITO: um anel de luz que nasce nos pes do Leo e se
+    abre rente ao chao, como a onda de um som. Vive no mundo.
+    """
+    DURA = 0.42
+
+    def __init__(self):
+        self.p = []           # [x, y, idade, cor]
+
+    def soltar(self, x, y, cor):
+        self.p.append([x, y, 0.0, cor])
+
+    def atualizar(self, dt):
+        for q in self.p:
+            q[2] += dt
+        self.p = [q for q in self.p if q[2] < self.DURA]
+
+    def desenhar(self, tela, cam_x, cam_y):
+        for x, y, idade, cor in self.p:
+            k = idade / self.DURA
+            raio = int(14 + 86 * (1.0 - (1.0 - k) ** 2))
+            alto = max(6, raio // 3)
+            esp = 4 if k < 0.35 else 3 if k < 0.7 else 2
+            r = pygame.Rect(int(x - cam_x) - raio, int(y - cam_y) - alto // 2, raio * 2, alto)
+            pygame.draw.ellipse(tela, (255, 255, 255) if k < 0.2 else cor, r, esp)
+            if k < 0.6:                                # um segundo anel, por dentro
+                pygame.draw.ellipse(tela, cor, r.inflate(-raio, -alto // 2), 2)
+
+
 class Ar:
     """
     Particulas que enchem o ar de um mundo. Vivem na tela, com parallax leve
     (andam um pouco com a camera), e dao a volta nas bordas: nunca acabam.
     """
 
-    def __init__(self, tema):
-        self.cfg = AR.get(tema.nome)
-        self.faixa = FAIXA_AR.get(tema.nome, (0.0, 1.0))
-        self.vagueia = VAGUEIA_AR.get(tema.nome, 0.0)
-        self.halo = HALO_AR.get(tema.nome)
-        r = random.Random(tema.nome)
+    def __init__(self, tema, cfg=None):
+        """`cfg`: um ar proprio (o de um ato, veja AR_DO_ATO) no lugar do ar do mundo."""
+        self.cfg = cfg or AR.get(tema.nome)
+        self.faixa = (0.0, 1.0) if cfg else FAIXA_AR.get(tema.nome, (0.0, 1.0))
+        self.vagueia = 0.0 if cfg else VAGUEIA_AR.get(tema.nome, 0.0)
+        self.halo = None if cfg else HALO_AR.get(tema.nome)
+        r = random.Random(tema.nome + str(cfg))
         n = self.cfg[0] if self.cfg else 0
         self.p = [(r.uniform(0, LARGURA), r.uniform(0, ALTURA), r.uniform(0, math.tau),
                    r.uniform(0.6, 1.4), r.random() < 0.3) for _ in range(n)]
