@@ -18,6 +18,12 @@ DT = 1.0 / FPS
 import main
 from jogo import arte, fases, menus, ui
 from jogo import partida as P
+
+
+# os trailers mostram os tres mundos originais, pelo NOME: a ordem da lista de
+# fases mudou quando as dunas entraram (0 = bosque, 1 = ilhas, 2 = cidadela)
+def _fase(i):
+    return fases.do_mundo(("bosque", "ilhas", "eclipse")[i])
 from jogo.audio import audio, TRILHAS
 from jogo.config import LARGURA, ALTURA, CONTORNO, BRANCO, CINZA, AMARELO, VERMELHO, PASSO_FISICA, JOGADOR_TAM
 from jogo.save import save
@@ -203,7 +209,7 @@ class Robo:
 
 
 def nova_partida(indice, semente, pular=()):
-    p = P.Partida(app, fases.carregar(indice))
+    p = P.Partida(app, _fase(indice))
     p._comecar()
     Robo(p, semente, pular)
     app.tela = p
@@ -259,7 +265,7 @@ def tb(t0, beat0, dur, b):
     return t0 + (b - beat0) * dur
 
 
-bosque, ilhas, eclipse = (fases.carregar(i) for i in range(3))
+bosque, ilhas, eclipse = (_fase(i) for i in range(3))
 DB, DI, DE = bosque.dur_batida, ilhas.dur_batida, eclipse.dur_batida
 Y_LEG = 585
 

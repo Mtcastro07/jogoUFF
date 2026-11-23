@@ -21,3 +21,11 @@ savegame.json.tmp
 
 # Pasta de configuracao do Claude criada por engano com um "~" literal (tem credenciais)
 /~/
+
+# Videos renderizados (o trailer tem mais de 100 MB, acima do limite do GitHub):
+# vao para o YouTube/itch.io, nao para o repositorio
+*.mp4
+
+# Faixas originais e versoes longas, guardadas so para refazer as edicoes
+# (ferramentas/geradores/editar_musica.py); o jogo usa as de assets/music
+ferramentas/musica_fonte/

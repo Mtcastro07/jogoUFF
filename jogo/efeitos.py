@@ -198,14 +198,21 @@ class Vento:
 AR = {
     # vaga-lumes: poucos, lentos, vagando entre as copas e o chao
     "bosque": (28, (120, 196, 104), (214, 255, 150), 5.0, -3.0, 26.0),
+    # graos de areia no vento do deserto, rasantes, da direita para a esquerda
+    "dunas": (40, (236, 204, 150), (255, 244, 214), -46.0, 6.0, 8.0),
     # poeira de luz levada pelo vento do por do sol, da direita para a esquerda
     "ilhas": (46, (255, 206, 170), (255, 240, 220), -26.0, -6.0, 10.0),
+    # neve caindo devagar, de lado, em flocos de dois tamanhos
+    "geleira": (48, (196, 216, 255), (255, 255, 255), -16.0, 34.0, 18.0),
     # brasas raras e apagadas, subindo devagar da coroa do eclipse
     "eclipse": (30, (190, 80, 60), (230, 130, 90), -5.0, -10.0, 8.0),
 }
 # so no bosque: a faixa da tela (fracao da altura) onde os vaga-lumes vivem, o
 # quanto sobem e descem vagando, e o halo em cruz em volta dos que estao acesos
-FAIXA_AR = {"bosque": (0.34, 0.9)}
+# nas dunas, a areia corre rente as dunas: espalhada no ceu de dia, parecia estrela
+FAIXA_AR = {"bosque": (0.34, 0.9), "dunas": (0.48, 0.97)}
+# ...e o ar de cada ato tambem fica embaixo, onde o mundo for de dia
+FAIXA_AR_DO_ATO = {"dunas": (0.40, 1.0)}
 VAGUEIA_AR = {"bosque": 13.0}
 HALO_AR = {"bosque": (46, 92, 58)}
 
@@ -216,9 +223,15 @@ AR_DO_ATO = {
     # nas ruinas as folhas caem; na aurora, esporos de luz sobem do chao
     "bosque": {2: (34, (74, 120, 88), (150, 200, 120), -34.0, 44.0, 30.0),
                3: (30, (150, 255, 200), (226, 255, 240), 6.0, -16.0, 26.0)},
+    # na quebra o vento levanta a areia; no final, faiscas turquesa do oasis sobem
+    "dunas": {2: (70, (226, 180, 120), (250, 224, 170), -130.0, 12.0, 10.0),
+              3: (30, (120, 232, 214), (226, 255, 248), -10.0, -16.0, 22.0)},
     # no crepusculo, ciscos de gelo; no ultimo clarao, petalas douradas no vento
     "ilhas": {2: (34, (150, 226, 255), (240, 250, 255), -12.0, -8.0, 18.0),
               3: (40, (255, 214, 150), (255, 244, 214), -60.0, 14.0, 14.0)},
+    # na quebra, a nevasca; no final, faiscas da aurora subindo do gelo
+    "geleira": {2: (90, (206, 222, 255), (255, 255, 255), -170.0, 60.0, 8.0),
+                3: (34, (110, 255, 214), (226, 255, 246), -6.0, -20.0, 22.0)},
     # o eclipse sangrando chove brasa; no final, cinza fria caindo devagar
     "eclipse": {2: (60, (255, 128, 96), (255, 220, 150), -16.0, -64.0, 12.0),
                 3: (40, (150, 160, 220), (226, 230, 255), -8.0, 26.0, 16.0)},
@@ -264,7 +277,8 @@ class Ar:
     def __init__(self, tema, cfg=None):
         """`cfg`: um ar proprio (o de um ato, veja AR_DO_ATO) no lugar do ar do mundo."""
         self.cfg = cfg or AR.get(tema.nome)
-        self.faixa = (0.0, 1.0) if cfg else FAIXA_AR.get(tema.nome, (0.0, 1.0))
+        self.faixa = (FAIXA_AR_DO_ATO.get(tema.nome, (0.0, 1.0)) if cfg
+                      else FAIXA_AR.get(tema.nome, (0.0, 1.0)))
         self.vagueia = 0.0 if cfg else VAGUEIA_AR.get(tema.nome, 0.0)
         self.halo = None if cfg else HALO_AR.get(tema.nome)
         r = random.Random(tema.nome + str(cfg))

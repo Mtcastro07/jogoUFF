@@ -18,6 +18,8 @@ atrasado (descer um degrau cai mais longe) nunca empurra os pulos seguintes.
 Bater num caco do chao, num bloco ou na parede de um degrau custa um coracao:
 o bloco se quebra, e Leo fica um instante invulneravel (piscando). Cair num
 fosso NAO tem volta: Leo desce ate os cacos do fundo e a partida acaba ali.
+Os ENXAMES das dunas pairam acima de quem corre: so ferem quem pula debaixo
+deles -- o obstaculo que pede para NAO tocar.
 
 A colisao e a do que se ve: contra o chao e as paredes vale a SOLA do Leo (o
 meio da caixa, onde o corpo dele esta), contra os cacos vale o CORPO -- com
@@ -63,7 +65,7 @@ class Estado:
         # o que aconteceu NESTE passo (a partida le e reage)
         self.acao = None          # "pulo" quando ele pulou neste passo
         self.repetido = False     # o pulo saiu so por segurar o botao (sem toque novo)
-        self.dano = None          # "parede", "bloco", "perigo", "fosso" ou "abismo"
+        self.dano = None          # "parede", "bloco", "perigo", "enxame", "pingente", "fosso" ou "abismo"
         self.quebrou = None       # a celula do bloco que se quebrou agora
         self.pousou = False
         self.pouso = -1.0         # instante do ultimo pouso (a arte mostra o pe tocando o chao)
@@ -285,6 +287,19 @@ def passo(fase, est, pressionado, apertou, repetir=False, dt=PASSO_FISICA):
                 break
         if est.dano:
             break
+
+    # 4b. enxames e pingentes: ficam ACIMA de quem corre e so pegam quem pula
+    # (o pingente, so quem pula ALTO). Quem bate num deles perde o coracao mas
+    # segue o arco (nao ha chao para o resgate).
+    if est.invuln <= 0.0:
+        for tx in range(int(bx // TILE), int((bx + bw) // TILE) + 1):
+            for vx, vy, vw, vh, tipo in fase.col_voadores.get(tx, ()):
+                if bx < vx + vw and bx + bw > vx and by < vy + vh and by + bh > vy:
+                    if ferir(fase, est, tipo, resgatar=False):
+                        return
+                    break
+            if est.dano:
+                break
 
     # 5. pulo: um toque recente, ou o botao segurado
     # (menos na fase so de toques, em que segurar nao pula de novo).

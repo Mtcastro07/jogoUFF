@@ -32,6 +32,12 @@ import pygame
 
 import main
 from jogo import fases, menus, mundo, ui, partida as P
+
+
+# os trailers mostram os tres mundos originais, pelo NOME: a ordem da lista de
+# fases mudou quando as dunas entraram (0 = bosque, 1 = ilhas, 2 = cidadela)
+def _fase(i):
+    return fases.do_mundo(("bosque", "ilhas", "eclipse")[i])
 from jogo.audio import audio, TRILHAS
 from jogo.config import (LARGURA as W, ALTURA as H, PASSO_FISICA, DIR_MUSICA, DIR_SFX,
                          BRANCO, AMARELO, VERMELHO, VERDE, AZUL, ROXO, CONTORNO)
@@ -199,7 +205,7 @@ class Jogo:
 
     def __init__(self, app, indice, batida, parar_de_tocar=None):
         self.app = app
-        f = self.fase = fases.carregar(indice)
+        f = self.fase = _fase(indice)
         p = self.p = P.Partida(app, f)
         app.tela = p
         app.transicao.estado = 0
@@ -325,7 +331,7 @@ class Trailer:
     # --------------------------------------------------------------- roteiro
     def rodar(self):
         som = self.som
-        compasso = {i: fases.carregar(i).dur_batida * 4 for i in range(3)}
+        compasso = {i: _fase(i).dur_batida * 4 for i in range(3)}
 
         def impacto(t, forca=1.0):
             """flash e tranco que somem em ~0,3 s"""
@@ -377,7 +383,7 @@ class Trailer:
         self.plano("3 logo sobre o bosque")
         som.somar(boom(), self.t, 1.0)
         logo = pygame.transform.scale_by(ui.imagem("logo.png"), 3)
-        d = fases.carregar(0).dur_batida
+        d = _fase(0).dur_batida
         entrada = 4 * d
 
         def bosque_cima(tela, t, b):
@@ -406,7 +412,7 @@ class Trailer:
 
         # 5 -- as Ilhas: um compasso de subida e o drop
         self.plano("5 ilhas: subida e drop")
-        d = fases.carregar(1).dur_batida
+        d = _fase(1).dur_batida
         som.somar(riser(4 * d), self.t, 0.7)
         som.somar(boom(), self.t + 4 * d, 0.8)
 
@@ -453,7 +459,7 @@ class Trailer:
 
         # 8 -- a Cidadela: construcao e drop
         self.plano("8 cidadela: construcao e drop")
-        d = fases.carregar(2).dur_batida
+        d = _fase(2).dur_batida
         som.somar(riser(8 * d), self.t, 0.9)
         som.somar(boom(), self.t + 8 * d, 1.0)
 
@@ -501,7 +507,7 @@ class Trailer:
                 if t > 1.4:
                     ui.desenhar_texto_ajustado(tela, linha, 16, W // 2, 560 + i * 34, W - 120, BRANCO)
             veu(tela, (0, 0, 0), 255 * max(0.0, (t - dur + 0.9) / 0.9))
-        d = fases.carregar(0).dur_batida
+        d = _fase(0).dur_batida
         self.jogar(0, 196, 196 + dur / d, fim_cima, lambda t, b: impacto(t), corte_glitch=False)
         self.som.musicas[-1] = self.som.musicas[-1][:5] + (0.9,)
 
@@ -509,7 +515,7 @@ class Trailer:
 
     def _achar_erro(self):
         """(batida inicial, batida em que o robo para de tocar): um erro que acaba num CACO, logo."""
-        f = fases.carregar(2)
+        f = _fase(2)
         for parar in [b for b in f.acoes if 110 <= b <= 150]:
             jogo = Jogo(self.app, 2, parar - 4, parar)
             limite = (parar + 3) * f.dur_batida

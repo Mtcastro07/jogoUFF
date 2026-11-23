@@ -514,6 +514,50 @@ def _glitch(base):
     return [base] * (QUADROS_GLITCH - 4) + [faisca, fatia, faisca, base]
 
 
+QUADROS_ENXAME = 4
+
+
+def enxame(fase, cor, i=0):
+    """
+    O enxame que paira no ar (objetos/jogo/<fase>/enxame_4f.png): uma coluna de
+    bichos de ruido batendo asa. Sem arte, tres losangos na cor do perigo.
+    """
+    pronto = _peca("enxame", int(i) % QUADROS_ENXAME, cor, fase)
+    if pronto is not None:
+        return pronto
+    def faz():
+        s = pygame.Surface((40, 124), pygame.SRCALPHA)
+        for k in range(3):
+            cx, cy = 20 + (k % 2) * 6 - 3, 20 + k * 42
+            pygame.draw.polygon(s, cor, [(cx, cy - 14), (cx + 12, cy), (cx, cy + 14), (cx - 12, cy)])
+            pygame.draw.polygon(s, clarear(cor, 0.5), [(cx, cy - 14), (cx + 12, cy), (cx, cy + 14),
+                                                       (cx - 12, cy)], 2)
+        return s
+    return _memo(("enxame", cor), faz)
+
+
+QUADROS_PINGENTE = 4
+
+
+def pingente(fase, cor, i=0):
+    """
+    Os cristais pendurados de uma laje de gelo (objetos/jogo/<fase>/pingente_4f.png).
+    A ponta de baixo e o pe da caixa de colisao. Sem arte, tres pontas para baixo.
+    """
+    pronto = _peca("pingente", int(i) % QUADROS_PINGENTE, cor, fase)
+    if pronto is not None:
+        return pronto
+    def faz():
+        s = pygame.Surface((96, 128), pygame.SRCALPHA)
+        pygame.draw.rect(s, clarear(cor, 0.6), (0, 0, 96, 16))
+        for k, (x, alto) in enumerate(((20, 90), (48, 128), (76, 100))):
+            pontos = [(x - 12, 16), (x + 12, 16), (x, alto)]
+            pygame.draw.polygon(s, cor, pontos)
+            pygame.draw.polygon(s, clarear(cor, 0.5), pontos, 2)
+        return s
+    return _memo(("pingente", cor), faz)
+
+
 def chao(fase):
     """Topo do chao proprio da fase (objetos/jogo/<fase>/chao.png), ou None."""
     return png("objetos", "jogo", fase, "chao.png")

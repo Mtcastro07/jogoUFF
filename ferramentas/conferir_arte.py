@@ -40,6 +40,8 @@ CONTRATO = {
     # pecas de jogo PROPRIAS de uma fase: coloridas, largura de 1 tile
     "objetos/jogo/bosque": [
         ("chao.png", 1, 48, None, False),
+        ("portal_4f.png", 4, 96, 192, False),
+        ("chevron_2f.png", 2, 32, 32, False),
     ],
     "objetos/cenario/bosque": [
         ("astro_3f.png", 3, 44, 44, False),
@@ -52,6 +54,32 @@ CONTRATO = {
         ("perto_3.png", 1, None, None, False),
         ("perto_4.png", 1, None, None, False),
     ],
+    "objetos/jogo/dunas": [
+        ("portal_4f.png", 4, 96, 192, False),
+        ("chevron_2f.png", 2, 32, 32, False),
+        ("caco1.png", 1, 48, 48, False),
+        ("caco2.png", 1, 48, 48, False),
+        ("caco3.png", 1, 48, 48, False),
+        ("enxame_4f.png", 4, 48, 124, False),
+        ("bloco.png", 1, 48, 48, False),
+    ],
+    "objetos/cenario/dunas": [
+        ("astro_3f.png", 3, 44, 44, False),
+    ] + [(f"longe_{i}.png", 1, None, None, False) for i in range(1, 6)]
+      + [(f"perto_{i}.png", 1, None, None, False) for i in range(1, 6)],
+    "objetos/jogo/geleira": [
+        ("portal_4f.png", 4, 96, 192, False),
+        ("chevron_2f.png", 2, 32, 32, False),
+        ("caco1.png", 1, 48, 48, False),
+        ("caco2.png", 1, 48, 48, False),
+        ("caco3.png", 1, 48, 48, False),
+        ("pingente_4f.png", 4, 96, 128, False),
+        ("bloco.png", 1, 48, 48, False),
+    ],
+    "objetos/cenario/geleira": [
+        ("astro_3f.png", 3, 44, 44, False),
+    ] + [(f"longe_{i}.png", 1, None, None, False) for i in range(1, 5)]
+      + [(f"perto_{i}.png", 1, None, None, False) for i in range(1, 6)],
     "objetos/jogo/ilhas": [
         ("caco1.png", 1, 48, 48, False),
         ("caco2.png", 1, 48, 48, False),
@@ -66,7 +94,7 @@ CONTRATO = {
         ("ponte_pronta.png", 1, 48, None, False),
         ("ponte_viva_3f.png", 3, 48, None, False),
         ("ponte_pilar.png", 1, None, None, False),
-        ("chevron.png", 1, 32, 32, False),
+        ("chevron_2f.png", 2, 32, 32, False),
     ],
     "objetos/cenario/ilhas": [
         ("astro_3f.png", 3, 44, 44, False),
@@ -83,8 +111,8 @@ CONTRATO = {
         ("caco2.png", 1, 48, 48, False),
         ("caco3.png", 1, 48, 48, False),
         ("bloco.png", 1, 48, 48, False),
-        ("portal.png", 1, 96, 192, False),
-        ("chevron.png", 1, 32, 32, False),
+        ("portal_4f.png", 4, 96, 192, False),
+        ("chevron_2f.png", 2, 32, 32, False),
         ("ponte_viva_4f.png", 4, 48, None, False),
     ] + [(f"coluna_{i}_2f.png", 2, 56, 96, False) for i in range(1, 6)]
       + [(f"ponte_pilar_{i}.png", 1, None, None, False) for i in range(1, 5)],
@@ -109,14 +137,18 @@ CONTRATO = {
         ("nota_b.png", 1, 64, 64, False),
         ("nota_c.png", 1, 64, 64, False),
         ("emblema_bosque.png", 1, 96, 96, False),
+        ("emblema_dunas.png", 1, 96, 96, False),
         ("emblema_ilhas.png", 1, 96, 96, False),
+        ("emblema_geleira.png", 1, 96, 96, False),
         ("emblema_eclipse.png", 1, 96, 96, False),
         ("logo.png", 1, None, None, False),
         # molduras 9-slice: recortadas no desenho, o codigo estica (ui.moldura)
         ("moldura_padrao.png", 1, None, None, False),
         ("moldura_foco.png", 1, None, None, False),
         ("moldura_bosque.png", 1, None, None, False),
+        ("moldura_dunas.png", 1, None, None, False),
         ("moldura_ilhas.png", 1, None, None, False),
+        ("moldura_geleira.png", 1, None, None, False),
         ("moldura_eclipse.png", 1, None, None, False),
         ("trilho.png", 1, None, None, False),
     ],

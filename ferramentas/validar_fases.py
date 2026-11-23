@@ -35,7 +35,7 @@ pygame.init()
 pygame.display.set_mode((1280, 720))
 
 from jogo import arte, fases
-from jogo.config import PASSO_FISICA, JANELA_BOM, DIR_MUSICA
+from jogo.config import PASSO_FISICA, JANELA_BOM, DIR_MUSICA, TILE
 from jogo.partida import Partida, JOGANDO
 from jogo.save import save
 
@@ -43,6 +43,7 @@ save.salvar = lambda: None          # o robo nunca grava recorde
 arte.carregar()
 
 LIMITE = JANELA_BOM * 0.95          # o erro maximo dos toques do robo (em batidas)
+CURTO = 0.11                        # segundos: o toque mais longo que ainda e "um toque" (pingente)
 SORTEIOS = 12                       # partidas com erro sorteado por fase
 RAPIDO = 0.06                       # segundos de um toque rapido (o pulo baixo)
 
@@ -75,6 +76,15 @@ def jogar(fase, erro_de, segura_de=None, segurar=False):
     Devolve (partida, [(batida, motivo)] dos danos).
     """
     segura_de = segura_de or rapidos(fase)
+    if fase.curtos:
+        # o pingente pede o botao solto: ali o robo so da toques, de ate CURTO s
+        # (quem segura ali se fere, e e isso que o obstaculo ensina)
+        pedido = segura_de
+        def segura_de(i):
+            s = pedido(i)
+            if fase.acoes[i] in fase.curtos:
+                return RAPIDO if s is None else min(s, CURTO)
+            return s
     partida = Partida(_App(), fase)
     partida.modo = JOGANDO
     partida.liberou = segurar
@@ -158,6 +168,39 @@ def validar(indice):
             print(f"  [{'ok' if ok else 'ERRO'}] {nome} sempre {'cedo ' if erro < 0 else 'tarde'} "
                   f"{abs(erro):.2f} batida" + (f" -- {descrever(fase, danos)}" if danos else ""))
 
+    # alternando: um toque adiantado e o seguinte atrasado (e o contrario).
+    # Sempre cedo ou sempre tarde, o Leo so se desloca inteiro; alternando, um
+    # pulo encurta e o outro estica -- e e ai que a passarela de uma rota
+    # dupla, ou uma fileira de ilhas, pode ficar sem onde pousar
+    for nome, segura_de in (("rapido  ", None), ("segurado", cheios)):
+        for a, b in ((-LIMITE / 2, LIMITE * 0.8), (LIMITE * 0.8, -LIMITE / 2)):
+            partida, danos = jogar(fase, lambda i: a if i % 2 == 0 else b, segura_de)
+            ok = partida.est.venceu and not danos
+            falhas += not ok
+            print(f"  [{'ok' if ok else 'ERRO'}] {nome} alternando {a:+.2f} e {b:+.2f} batida"
+                  + (f" -- {descrever(fase, danos)}" if danos else ""))
+
+    # as rotas duplas: cada par de pulos LONGOS seguidos dentro dela (o botao
+    # segurado por quase o pulo todo, como o mais longo do sorteio), numa
+    # grade de adiantado e atrasado (o resto da fase em toques perfeitos). La
+    # em cima, um pulo que encurta e o seguinte que estica podem nao achar o
+    # proximo pedaco da passarela -- e o sorteio quase nunca cai bem ali
+    grade = (-LIMITE * 0.8, -LIMITE * 0.4, 0.0, LIMITE * 0.4, LIMITE * 0.8)
+    for b0, b1 in fase.duplas:
+        idx = [k for k, b in enumerate(fase.acoes) if b0 <= b < b1 + 1]
+        ruins_dupla = []
+        for p, q in zip(idx, idx[1:]):
+            for e1 in grade:
+                for e2 in grade:
+                    _, danos = jogar(fase, lambda i: e1 if i == p else (e2 if i == q else 0.0),
+                                     lambda i: 0.88 * fase.duracao_pulo if i in (p, q) else RAPIDO)
+                    if danos:
+                        ruins_dupla.append((fase.acoes[p], e1, e2))
+        falhas += bool(ruins_dupla)
+        print(f"  [{'ok' if not ruins_dupla else 'ERRO'}] rota dupla das batidas {b0:g}-{b1:g}: "
+              f"{len(ruins_dupla)} pares de pulos longos com dano"
+              + "".join(f"\n        da batida {b:g}: {e1:+.2f} e {e2:+.2f}" for b, e1, e2 in ruins_dupla[:3]))
+
     ruins = []
     for semente in range(SORTEIOS):
         rnd = random.Random(semente)
@@ -172,6 +215,14 @@ def validar(indice):
           f"{SORTEIOS - len(ruins)} de {SORTEIOS} partidas sem dano")
     for semente, danos in ruins[:4]:
         print(f"        sorteio {semente}: {descrever(fase, danos)}")
+
+    # so informativo: um salto que sai entre dois tiles (meia batida a 5 ou 7
+    # tiles por batida) tem o obstaculo meio tile fora do alto do arco -- no
+    # limite da janela, um toque curto pode bater nele (veja _fase3)
+    fora = [b for b, x, _ in fase.saltos if abs(x / TILE - round(x / TILE)) > 0.01]
+    if fora:
+        print(f"  [aviso] saltos entre dois tiles, nas batidas {', '.join(f'{b:g}' for b in fora)}: "
+              "confira os toques curtos no limite da janela")
 
     # so informativo: segurar o botao a fase inteira nao pode bastar
     partida, danos = jogar(fase, lambda i: 0.0, segurar=True)

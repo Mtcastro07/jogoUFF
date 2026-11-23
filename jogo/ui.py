@@ -72,7 +72,8 @@ def desenhar_texto_ajustado(tela, s, tam, x, y, largura_max, cor=BRANCO):
 # Molduras 9-slice (assets/art/ui/moldura_*.png): nome -> quina, em px da arte.
 # Quinas ficam como desenhadas; lados e miolo esticam a partir de uma faixa de
 # 1 pixel da arte, entao nenhum enfeite se repete nem deforma. Ampliadas 2x.
-MOLDURAS = {"padrao": 10, "foco": 10, "bosque": 12, "ilhas": 12, "eclipse": 14}
+MOLDURAS = {"padrao": 10, "foco": 10, "bosque": 12, "dunas": 12, "ilhas": 12, "geleira": 12,
+            "eclipse": 14}
 ESCALA_MOLDURA = 2
 _molduras = {}
 

@@ -1,5 +1,6 @@
 """
-O chao desenhado das tres fases. No Bosque dos Ecos e um caminho de lajes com
+O chao desenhado das fases. Nas Dunas do Chocalho e areia sobre arenito em
+camadas; na Geleira da Aurora, neve sobre gelo glacial. No Bosque dos Ecos e um caminho de lajes com
 musgo sobre terra em camadas. Nas Ilhas Suspensas cada trecho de chao e uma
 ilha de pedra flutuando -- linha de cristal no topo, rocha em camadas e o fundo
 arredondado, com o ceu aparecendo por baixo. Na Cidadela e alvenaria. A paleta
@@ -74,7 +75,7 @@ def _perfil(fase):
     tx0, tx1 = min(chao), max(chao) + 1
     x0 = tx0 * TILE
     n = (tx1 - tx0) * TILE // UNID
-    rnd = random.Random(f"ilhas/{fase.ident}")
+    rnd = random.Random(f"ilhas/{fase.semente}")
     barriga = _ruido(rnd, n, 26)            # a barriga ondula a cada ~100 px
     pedras = _ruido(rnd, n, 5)              # e as pedras do contorno, a cada ~20 px
 
@@ -427,7 +428,7 @@ def _lajes(fase):
     if fase.ident not in _juntas:
         chao = fase.chao_col
         x, fim = min(chao) * TILE, (max(chao) + 1) * TILE
-        rnd = random.Random(f"bosque/{fase.ident}")
+        rnd = random.Random(f"bosque/{fase.semente}")
         lista = []
         x += rnd.randrange(8, 40, PX)
         while x < fim:
@@ -629,10 +630,342 @@ def fosso(tela, tx0, tx1, y, cam_x, cam_y):
         if h % 3 == 0:
             tela.fill(PEDRA_CORPO, (x + k + h % 8 // PX * PX, y - cam_y + 2 * PX, 3 * PX, PX))
 
+# ---------------------------------------------------------------- as dunas
+# O chao das Dunas do Chocalho: uma capa de areia clara, penteada pelo vento,
+# sobre ARENITO em camadas onduladas (ocre, ferrugem, creme), como a parede de
+# um canion. As camadas seguem o x/y do MUNDO: continuam de uma coluna para a
+# outra. Aqui e ali, um fossil em espiral, um caco de anfora ou um glifo
+# turquesa -- redondos: pontudo, nas dunas, so o perigo.
+FUNDO_DUNAS = 6 * TILE          # abaixo disso o arenito ja e so sombra
+AREIA_LUZ = (255, 232, 160)     # a linha do chao, a que o olho segue
+AREIA = (238, 196, 126)
+AREIA_MEIA = (220, 170, 106)
+AREIA_SOMBRA = (190, 134, 86)
+ARENITO = ((198, 124, 78), (174, 100, 66), (212, 146, 92), (156, 86, 60), (186, 112, 72))
+VEIO_DUNAS = (126, 66, 52)
+CREME = (232, 190, 132)
+PROFUNDO_DUNAS = (64, 32, 38)
+GLIFO = (72, 226, 208)
+FOSSIL = (240, 214, 170)
 
-ESTILO = {"bosque": _desenhar_bosque, "ilhas": _desenhar_coluna, "eclipse": _desenhar_cidadela}
+
+# --- a pedra em camadas, rapida ----------------------------------------------
+# Nas dunas e na geleira a cor de um ponto da pedra so depende de UMA conta,
+# u = altura no mundo + onda(x): a camada (ou faixa) e o lugar dentro dela.
+# Entao a cor de cada u e pintada UMA vez por fase, numa faixa de PX de largura
+# (`_textura`), e cada coluna do chao so recorta dela um pedaco por x -- em vez
+# de calcular celula por celula, o que custava 9 a 16 ms por coluna e travava a
+# partida toda vez que uma coluna nova entrava na tela.
+_texturas = {}
+_sombras = {}
+_quinas = {}
+
+
+def _textura(nome, cor_de, u0, u1):
+    """
+    {paridade: surface PX x (u1 - u0)} e {u: (cor, so_pedra)}: a linha r da
+    surface de paridade p tem a cor de u = u0 + p + 2 * (r // 2), repetida em PX
+    linhas -- recortar a partir de r0 = b - u0 - p da as celulas u = b, b+2, ...
+    """
+    chave = (nome, u0, u1)
+    if chave not in _texturas:
+        cores = {u: cor_de(u) for u in range(u0, u1 + 2 * PX)}
+        faixas = {}
+        for p in (0, 1):
+            f = pygame.Surface((PX, u1 - u0 + 2 * PX)).convert()
+            for r in range(0, u1 - u0, 2):
+                f.fill(cores[u0 + p + r][0], (0, r, PX, 2))
+            faixas[p] = f
+        _texturas[chave] = (faixas, cores)
+    return _texturas[chave]
+
+
+def _faixa_da_fase(fase, folga):
+    """O intervalo de u que a fase inteira usa (com folga para a onda)."""
+    alturas = [c * TILE for c in fase.chao_col.values()]
+    return min(alturas) - folga, max(alturas) + 6 * TILE + folga
+
+
+def _recortar(s, textura, u0, x, b, y, alto):
+    """Copia para a coluna (no x, a partir de y) as celulas u = b, b+2, ... da textura."""
+    p = (b - u0) % 2
+    s.blit(textura[p], (x, y), (0, b - u0 - p, PX, alto))
+
+
+def _sombra(cor, inicio, largura, alto, fim, curva):
+    """O escurecer com a profundidade, por cima da coluna inteira (uma blit)."""
+    chave = (cor, inicio, largura, alto, fim, curva)
+    if chave not in _sombras:
+        f = pygame.Surface((largura, alto), pygame.SRCALPHA)
+        for y in range(0, alto, PX):
+            k = min(1.0, max(0.0, (y - fim[0]) / fim[1])) ** curva
+            f.fill((*cor, int(round(255 * k))), (0, y, largura, PX))
+        _sombras[chave] = f
+    return _sombras[chave]
+
+
+def _quina(cor, fundo, de, ate, fim, curva=1.0):
+    """A quina acesa (ou sombreada) de um degrau: uma tira de 2 px, guardada."""
+    chave = (cor, fundo, de, ate, fim, curva)
+    if chave not in _quinas:
+        f = pygame.Surface((2, max(1, ate - de))).convert()
+        for y in range(de, ate, PX):
+            k = min(1.0, max(0.0, (y - fim[0]) / fim[1])) ** curva
+            f.fill(_misturar(cor, fundo, k), (0, y - de, 2, PX))
+        _quinas[chave] = f
+    return _quinas[chave]
+
+
+def _camada_dunas(xw, y):
+    """Em qual camada de arenito o ponto (x do mundo, profundidade y) esta."""
+    onda = 6.0 * math.sin(xw * 0.017) + 2.5 * math.sin(xw * 0.049 + 1.3)
+    return int((y + onda) // 26)
+
+
+def _cor_dunas(u):
+    """(cor, e miolo de camada) da pedra das dunas no ponto u = altura + onda."""
+    k = u // 26
+    cor = ARENITO[_h(k, 3) % len(ARENITO)]
+    if (u - PX) // 26 != k:
+        return _misturar(cor, VEIO_DUNAS, 0.55), False      # o veio entre camadas
+    if (u - 2 * PX) // 26 != k and _h(k, 5) % 4 == 0:
+        return _misturar(cor, CREME, 0.5), False            # a camada mais dura, clara
+    desce = 0.0                                             # o pe da camada, mais escuro
+    for d in (4, 8, 12):
+        if (u + d * PX) // 26 != k:
+            desce = (13 - d) / 26.0
+            break
+    return _misturar(cor, VEIO_DUNAS, desce * 0.5), True
+
+
+def _desenhar_dunas(fase, tx):
+    chao = fase.chao_col
+    topo = chao[tx] * TILE
+    s = pygame.Surface((TILE, ACIMA + FUNDO_DUNAS), pygame.SRCALPHA)
+    alto = ACIMA
+    x0 = tx * TILE
+    # o arenito: camadas largas e onduladas, cada uma com o seu tom, que vai
+    # escurecendo de cima para baixo dentro da camada (o sol bate na de cima)
+    # e com a profundidade. Entre duas camadas, so um veio discreto.
+    u0, u1 = _faixa_da_fase(fase, 16)
+    textura, cores = _textura("dunas", _cor_dunas, u0, u1)
+    for px in range(0, TILE, PX):
+        xw = x0 + px
+        onda = 6.0 * math.sin(xw * 0.017) + 2.5 * math.sin(xw * 0.049 + 1.3)
+        b = topo + 10 + int(math.floor(onda + 0.5))          # as camadas sao do MUNDO
+        _recortar(s, textura, u0, px, b, alto + 10, FUNDO_DUNAS - 10)
+        # os graos: poucos por x, em alturas sorteadas pelo x do mundo
+        xc = xw // PX
+        passo = 31
+        yc = _h(xc, 7) % passo
+        while yc < (FUNDO_DUNAS - 10) // PX:
+            cor, pedra = cores[b + yc * PX]
+            if pedra:
+                s.fill(_misturar(cor, VEIO_DUNAS, 0.3), (px, alto + 10 + yc * PX, PX, PX))
+            yc += 20 + _h(xc, yc, 8) % 23
+    s.blit(_sombra(PROFUNDO_DUNAS, 10, TILE, FUNDO_DUNAS + alto, (alto + 30, FUNDO_DUNAS - 90.0), 0.8),
+           (0, 0), special_flags=0)
+    # achados na pedra, raros: fossil em espiral, glifo, caco de anfora
+    sorte = _h(tx, 11) % 100
+    if sorte < 9:
+        cx, cy = 10 + _h(tx, 12) % 20, alto + 34 + _h(tx, 13) % 50
+        for dx, dy in ((2, 0), (4, 0), (6, 2), (6, 4), (4, 6), (2, 6), (0, 4), (0, 2), (2, 2), (3, 3)):
+            s.fill(FOSSIL if (dx + dy) % 4 else _misturar(FOSSIL, VEIO_DUNAS, 0.4), (cx + dx, cy + dy, PX, PX))
+    elif sorte < 15:
+        # o sol da caravana gravado na pedra: um anel turquesa com raios curtos
+        cx, cy = 16 + _h(tx, 14) % 14, alto + 34
+        tinta = _misturar(GLIFO, ARENITO[3], 0.35)
+        sulco = _misturar(VEIO_DUNAS, ARENITO[3], 0.3)
+        for dx, dy in ((-2, -6), (0, -6), (2, -6), (-6, -2), (-6, 0), (-6, 2), (6, -2), (6, 0),
+                       (6, 2), (-2, 6), (0, 6), (2, 6), (-4, -4), (4, -4), (-4, 4), (4, 4)):
+            s.fill(sulco, (cx + dx, cy + dy + PX, PX, PX))
+            s.fill(tinta, (cx + dx, cy + dy, PX, PX))
+        for dx, dy in ((0, -10), (0, 10), (-10, 0), (10, 0)):
+            s.fill(tinta, (cx + dx, cy + dy, PX, PX))
+    elif sorte < 21:
+        cx, cy = 8 + _h(tx, 15) % 24, alto + 60 + _h(tx, 16) % 60
+        s.fill(ARENITO[3], (cx, cy, 10, 4))
+        s.fill(CREME, (cx + 2, cy - 2, 6, 2))
+        s.fill(VEIO_DUNAS, (cx + 2, cy + 4, 6, 2))
+    # a capa de areia: o topo aceso e as marcas do vento, que seguem o x do mundo
+    s.fill(AREIA_SOMBRA, (0, alto + 8, TILE, 4))
+    s.fill(AREIA_MEIA, (0, alto + 4, TILE, 6))
+    s.fill(AREIA, (0, alto + 2, TILE, 4))
+    s.fill(AREIA_LUZ, (0, alto, TILE, 2))
+    for px in range(0, TILE, PX):
+        xw = x0 + px
+        onda = int(2.0 + 1.6 * math.sin(xw * 0.19) + 1.2 * math.sin(xw * 0.071 + 2.0))
+        s.fill(AREIA_MEIA, (px, alto + 4 + onda // 2 * PX, PX, PX))             # a marola
+        if _h(xw // PX, 21) % 9 == 0:
+            s.fill(AREIA_LUZ, (px, alto + 4, PX, PX))                           # um grao que brilha
+        # a areia escorre para dentro do arenito, em dentes irregulares
+        dente = _h(xw // (2 * PX), 23) % 4
+        s.fill(AREIA_SOMBRA, (px, alto + 12, PX, dente * PX))
+    # um tufo de capim seco de vez em quando (dourado e curvo, nunca em ponta de lanca)
+    if _h(tx, 31) % 5 == 0:
+        gx = 6 + _h(tx, 32) % 30
+        for k, (dx, h) in enumerate(((0, 6), (2, 9), (4, 7), (6, 5))):
+            s.fill((214, 176, 92) if k % 2 else (176, 140, 70), (gx + dx, alto - h + 2, PX, h))
+        s.fill((236, 206, 120), (gx + 2, alto - 9 + 2, PX, PX))
+    # degrau e beira de vao: a quina acesa pelo sol desce pela pedra
+    for lado, x in ((-1, 0), (1, TILE - 2)):
+        viz = chao.get(tx + lado)
+        if viz is None or viz > chao[tx]:
+            ate = FUNDO_DUNAS if viz is None else (viz - chao[tx]) * TILE
+            cor = CREME if lado > 0 else VEIO_DUNAS       # o sol vem da direita
+            s.blit(_quina(cor, PROFUNDO_DUNAS, 12, min(ate, FUNDO_DUNAS), (40, FUNDO_DUNAS - 70.0)),
+                   (x, alto + 12))
+            s.fill(AREIA_LUZ, (x, alto, 2, 12))
+    return s
+
+
+def fosso_dunas(tela, tx0, tx1, y, cam_x, cam_y):
+    """
+    O fundo de um fosso das dunas: areia escura de sombra onde os cactos estao
+    cravados, afundando ate o pe da tela.
+    """
+    alto = tela.get_height()
+    x, w, sy = tx0 * TILE - cam_x, (tx1 - tx0) * TILE, y - cam_y
+    if sy >= alto:
+        return
+    for grossura, cor in ((PX, AREIA_SOMBRA), (3 * PX, ARENITO[3]),
+                          (4 * PX, _misturar(ARENITO[3], PROFUNDO_DUNAS, 0.45)),
+                          (4 * PX, _misturar(VEIO_DUNAS, PROFUNDO_DUNAS, 0.6))):
+        tela.fill(cor, (x, sy, w, grossura))
+        sy += grossura
+    tela.fill(PROFUNDO_DUNAS, (x, sy, w, alto - sy))
+    for k in range(0, w, 10):
+        h = _h(tx0 * TILE + k, 9)
+        if h % 3 == 0:
+            tela.fill(AREIA_MEIA, (x + k + h % 6, y - cam_y, 2 * PX, PX))
+
+
+# ---------------------------------------------------------------- a geleira
+# O chao da Geleira da Aurora: uma capa de neve fofa, em montinhos que seguem o
+# x do MUNDO, sobre gelo glacial em faixas azuis inclinadas, com bolhas presas,
+# fendas finas e, no fundo, o azul escuro do gelo velho. A lua vem da direita.
+FUNDO_GELEIRA = 6 * TILE
+NEVE_LUZ = (244, 252, 255)       # a linha do chao, a que o olho segue
+NEVE = (216, 236, 252)
+NEVE_SOMBRA = (162, 196, 236)
+NEVE_FUNDA = (120, 160, 214)
+GELO = ((76, 128, 188), (64, 112, 172), (90, 146, 204), (58, 100, 160))
+GELO_VEIO = (44, 78, 132)
+GELO_LUZ = (150, 214, 250)
+BOLHA = (206, 238, 255)
+PROFUNDO_GELO = (12, 20, 46)
+AURORA_GELO = (110, 255, 214)
+
+
+def _faixa_gelo(xw, y):
+    """Em qual faixa do gelo o ponto esta: faixas largas, inclinadas, levemente onduladas."""
+    return int((y + xw * 0.18 + 4.0 * math.sin(xw * 0.023)) // 22)
+
+
+def _cor_geleira(u):
+    """(cor, e miolo de faixa) do gelo no ponto u = altura + inclinacao(x)."""
+    k = u // 22
+    cor = GELO[_h(k, 4) % len(GELO)]
+    if (u - PX) // 22 != k:
+        return _misturar(cor, GELO_VEIO, 0.6), False        # a junta entre as faixas
+    if (u - 2 * PX) // 22 != k:
+        return _misturar(cor, GELO_LUZ, 0.35), False        # e o brilho logo abaixo dela
+    return cor, True
+
+
+def _desenhar_geleira(fase, tx):
+    chao = fase.chao_col
+    topo = chao[tx] * TILE
+    s = pygame.Surface((TILE, ACIMA + FUNDO_GELEIRA), pygame.SRCALPHA)
+    alto = ACIMA
+    x0 = tx * TILE
+    # a inclinacao das faixas cresce com o x: o intervalo de u vai ate o fim da fase
+    u0, u1 = _faixa_da_fase(fase, 8)
+    u1 += int(max(fase.chao_col) * TILE * 0.18) + TILE
+    textura, _ = _textura("geleira", _cor_geleira, u0, u1)
+    for px in range(0, TILE, PX):
+        xw = x0 + px
+        b = topo + 12 + int(math.floor(xw * 0.18 + 4.0 * math.sin(xw * 0.023) + 0.5))
+        _recortar(s, textura, u0, px, b, alto + 12, FUNDO_GELEIRA - 12)
+    s.blit(_sombra(PROFUNDO_GELO, 12, TILE, FUNDO_GELEIRA + alto, (alto + 26, FUNDO_GELEIRA - 80.0), 0.75),
+           (0, 0))
+    # bolhas presas no gelo: redondas, claras, mais raras no fundo
+    for n in range(3):
+        if _h(tx, 40 + n) % 3 == 0:
+            bx = 4 + _h(tx, 50 + n) % 38
+            by = 22 + _h(tx, 60 + n) % 110
+            luz = _misturar(BOLHA, PROFUNDO_GELO, min(0.8, by / 160.0))
+            s.fill(luz, (bx, alto + by, PX * 2, PX))
+            s.fill(luz, (bx - PX, alto + by + PX, PX * 4, PX))
+            s.fill(luz, (bx, alto + by + 2 * PX, PX * 2, PX))
+            s.fill(_misturar(luz, (255, 255, 255), 0.6), (bx, alto + by, PX, PX))
+    # uma fenda fina descendo em zigue-zague, de vez em quando
+    if _h(tx, 71) % 4 == 0:
+        fx = 8 + _h(tx, 72) % 30
+        for y in range(16, 120, PX):
+            fx += (1 if (y // 6) % 2 else -1) * (PX if _h(tx, y) % 3 == 0 else 0)
+            prof = min(1.0, y / 140.0)
+            s.fill(_misturar(GELO_VEIO, PROFUNDO_GELO, prof * 0.6), (fx, alto + y, PX, PX))
+            if y < 60:
+                s.fill(_misturar(GELO_LUZ, GELO[0], 0.4), (fx + PX, alto + y, PX, PX))
+    # raramente, uma runa da aurora gravada no gelo (redonda: pontudo e o perigo)
+    if _h(tx, 81) % 17 == 0:
+        cx, cy = 18 + _h(tx, 82) % 10, alto + 44
+        for dx, dy in ((2, 0), (4, 0), (0, 2), (6, 2), (0, 4), (6, 4), (2, 6), (4, 6), (3, 3)):
+            s.fill(_misturar(AURORA_GELO, GELO[1], 0.3), (cx + dx, cy + dy, PX, PX))
+    # a capa de neve: montinhos que seguem o x do mundo, com a sombra azul por baixo
+    for px in range(0, TILE, PX):
+        xw = x0 + px
+        monte = 2.0 + 1.6 * math.sin(xw * 0.09) + 1.2 * math.sin(xw * 0.031 + 1.7)
+        y0 = alto - int(monte // PX) * PX + 2 * PX
+        s.fill(NEVE_FUNDA, (px, alto + 12, PX, 2 * PX))
+        s.fill(NEVE_SOMBRA, (px, alto + 8, PX, 4 + (PX if _h(xw // PX, 3) % 3 == 0 else 0)))
+        s.fill(NEVE, (px, y0, PX, alto + 8 - y0))
+        s.fill(NEVE_LUZ, (px, y0, PX, PX))
+        if _h(xw // PX, 91) % 13 == 0:
+            s.fill((255, 255, 255), (px, y0 + PX, PX, PX))  # um cristal de neve que brilha
+    # a neve pinga para dentro do gelo, em gotas que congelaram
+    for px in range(0, TILE, 2 * PX):
+        gota = _h((x0 + px) // (2 * PX), 23) % 5
+        if gota >= 3:
+            s.fill(NEVE_SOMBRA, (px, alto + 16, PX, (gota - 1) * PX))
+            s.fill(NEVE, (px, alto + 16, PX, PX))
+    # degrau e beira de vao: a quina acesa pela lua (a direita), sombra na esquerda
+    for lado, x in ((-1, 0), (1, TILE - 2)):
+        viz = chao.get(tx + lado)
+        if viz is None or viz > chao[tx]:
+            ate = FUNDO_GELEIRA if viz is None else (viz - chao[tx]) * TILE
+            cor = GELO_LUZ if lado > 0 else GELO_VEIO
+            s.blit(_quina(cor, PROFUNDO_GELO, 12, min(ate, FUNDO_GELEIRA), (26, FUNDO_GELEIRA - 80.0)),
+                   (x, alto + 12))
+            s.fill(NEVE_LUZ, (x, alto + 2, 2, 10))
+    return s
+
+
+def fosso_geleira(tela, tx0, tx1, y, cam_x, cam_y):
+    """O fundo de uma fenda da geleira: gelo escuro onde os cristais estao cravados."""
+    alto = tela.get_height()
+    x, w, sy = tx0 * TILE - cam_x, (tx1 - tx0) * TILE, y - cam_y
+    if sy >= alto:
+        return
+    for grossura, cor in ((PX, NEVE_FUNDA), (3 * PX, GELO[3]),
+                          (4 * PX, _misturar(GELO[3], PROFUNDO_GELO, 0.5)),
+                          (4 * PX, _misturar(GELO_VEIO, PROFUNDO_GELO, 0.7))):
+        tela.fill(cor, (x, sy, w, grossura))
+        sy += grossura
+    tela.fill(PROFUNDO_GELO, (x, sy, w, alto - sy))
+    for k in range(0, w, 10):
+        h = _h(tx0 * TILE + k, 9)
+        if h % 3 == 0:
+            tela.fill(NEVE_SOMBRA, (x + k + h % 6, y - cam_y, 2 * PX, PX))
+
+
+ESTILO = {"bosque": _desenhar_bosque, "dunas": _desenhar_dunas, "ilhas": _desenhar_coluna,
+          "geleira": _desenhar_geleira, "eclipse": _desenhar_cidadela}
 # a parte de baixo que ja e so sombra: abaixo da superficie guardada, a tela e preenchida
-PREENCHER = {"bosque": (FUNDO_BOSQUE, PROFUNDO_BOSQUE), "eclipse": (FUNDO_CIDADELA, PROFUNDO)}
+PREENCHER = {"bosque": (FUNDO_BOSQUE, PROFUNDO_BOSQUE), "dunas": (FUNDO_DUNAS, PROFUNDO_DUNAS),
+             "geleira": (FUNDO_GELEIRA, PROFUNDO_GELO),
+             "eclipse": (FUNDO_CIDADELA, PROFUNDO)}
 
 
 FORCA_CLIMA = 0.55     # o chao pega o clima do ceu pela metade: a linha que o olho segue fica
@@ -666,12 +999,30 @@ def coluna(fase, tx):
     return s
 
 
+ADIANTE = 6        # colunas pintadas antes de entrar na tela, uma por quadro
+
+
 def preparar(fase):
-    """As contas da fase inteira (o fundo das ilhas, as lajes do bosque), antes do 1o quadro."""
+    """
+    As contas da fase inteira (o fundo das ilhas, as lajes do bosque) e as
+    primeiras colunas do chao, antes do 1o quadro -- debaixo da transicao.
+    """
     if fase.cancao == "ilhas":
         _perfil(fase)
     elif fase.cancao == "bosque":
         _lajes(fase)
+    if fase.cancao in ESTILO:
+        for tx in sorted(fase.chao_col)[:40]:
+            coluna(fase, tx)
+
+
+def _adiantar(fase, c1):
+    """Pinta a proxima coluna que ainda vai entrar na tela (no maximo uma por quadro)."""
+    chao = fase.chao_col
+    for tx in range(c1, c1 + ADIANTE):
+        if tx in chao and (fase.ident, tx) not in _colunas:
+            coluna(fase, tx)
+            return
 
 
 def desenhar(tela, fase, cam_x, cam_y, c0, c1, tempo=0.0):
@@ -690,6 +1041,7 @@ def desenhar(tela, fase, cam_x, cam_y, c0, c1, tempo=0.0):
             tela.blit(coluna(fase, tx), (x, y - ACIMA))
             if fundo and y + fundo < alto:
                 tela.fill(sombra, (x, y + fundo, TILE, alto - y - fundo))
+    _adiantar(fase, c1)
 
 
 def _cascata(tela, x, y, tempo):

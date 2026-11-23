@@ -24,7 +24,7 @@ import math
 
 import pygame
 
-from . import alpha, arte, efeitos, mundo, ui
+from . import alpha, arte, efeitos, mundo, notas, ui
 from .audio import audio
 from .cenario import Cenario, cena
 from .config import (LARGURA, ALTURA, VIDAS, PASSO_FISICA, BRANCO, CINZA,
@@ -131,6 +131,9 @@ class Partida:
         self.resultado = None
         self.poeira = efeitos.Poeira()
         self.faiscas = efeitos.Faiscas()
+        # a musica escrita: as notas que sobem a cada acerto e os sinais do mapa
+        self.revoada = notas.Revoada(self.fase.tema.destaque)
+        self.partitura = None if self.fase.alpha else notas.Partitura(self.fase)
         self.ecos = efeitos.Ecos()
         self.pegos = set()         # indices dos ecos (fase.brilhos) ja pegos
         self.eco_em = None         # instante do ultimo eco pego (a conta do HUD salta)
@@ -142,7 +145,7 @@ class Partida:
         self.dano_em = None        # (instante, qual coracao) da ultima pancada
         self.marco = None          # (instante, sequencia) do ultimo marco de combo
         # o melhor progresso ate esta partida: uma marquinha no trilho do rodape
-        self.melhor_antes = save.recorde(self.fase.ident)["melhor"]
+        self.melhor_antes = save.recorde(self.fase.cancao)["melhor"]
         audio.parar_musica()
 
     def sair(self):
@@ -260,6 +263,7 @@ class Partida:
             self.tempo_fim += dt
             self.poeira.atualizar(dt)
             self.faiscas.atualizar(dt)
+            self.revoada.atualizar(dt)
             self.cam.tremor = max(0.0, self.cam.tremor - dt * 40.0)   # o tranco passa
             if self.morte is not None:
                 self.morte.atualizar(dt)
@@ -284,6 +288,7 @@ class Partida:
         self.cam.seguir(self.fase, self.est, dt)
         self.poeira.atualizar(dt)
         self.faiscas.atualizar(dt)
+        self.revoada.atualizar(dt)
         self.ecos.atualizar(dt)
         # com a sequencia alta o Leo deixa um rastro: um quadro guardado a cada 3
         self.conta_rastro += 1
@@ -343,7 +348,10 @@ class Partida:
                 self.faiscas.soltar(est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM * 0.4,
                                     self.fase.tema.destaque if perfeito else AMARELO,
                                     12 if perfeito else 7)
-                if ritmo.combo and ritmo.combo % MARCO_COMBO == 0:
+                marco = bool(ritmo.combo and ritmo.combo % MARCO_COMBO == 0)
+                # e uma nota sobe da cabeca dele (no marco da sequencia, a clave de sol)
+                self.revoada.soltar(est.x + JOGADOR_TAM * 0.5, est.y - 4, perfeito, marco)
+                if marco:
                     # o marco da sequencia: um estouro maior, em duas cores
                     self.marco = (est.tempo, ritmo.combo)
                     self.faiscas.soltar(est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM * 0.4,
@@ -393,8 +401,8 @@ class Partida:
         if not venceu and not self.fase.alpha:          # a versao alpha nao tem animacao
             self.morte = efeitos.Desintegracao(*mundo.sprite_heroi(self.fase, est, self.y_desenho))
         progresso = min(100.0, est.x / self.fase.fim_x * 100.0)
-        recorde_antes = save.recorde(self.fase.ident)["pontos"]
-        save.registrar(self.fase.ident, progresso, venceu, r.pontos + r.bonus, r.nota(),
+        recorde_antes = save.recorde(self.fase.cancao)["pontos"]
+        save.registrar(self.fase.cancao, progresso, venceu, r.pontos + r.bonus, r.nota(),
                        r.precisao(), len(self.pegos))
         self.resultado = {
             "fase": self.fase, "completou": venceu, "pontos": r.pontos + r.bonus,
@@ -412,7 +420,28 @@ class Partida:
         frac = (self.est.tempo / self.fase.dur_batida) % 1.0
         return max(0.0, 1.0 - frac * 3.0)
 
+    def _adiante(self):
+        """
+        Quanto (px) o Leo ja andou desde o ultimo passo da fisica: a fisica anda
+        em passos de 1/240 s e um quadro cai entre dois passos. Desenhar so no
+        ultimo passo fazia a tela rolar 3 passos num quadro e 5 no outro -- um
+        tremido na corrida. O quadro e desenhado no ponto exato do tempo.
+        """
+        if self.modo != JOGANDO or not self.est.vivo or self.est.venceu:
+            return 0.0
+        return self.acumulador * self.fase.vx_em(self.est.x)
+
     def desenhar(self, tela):
+        adiante = self._adiante()
+        self.est.x += adiante
+        self.cam.x += adiante
+        try:
+            self._desenhar(tela)
+        finally:
+            self.est.x -= adiante
+            self.cam.x -= adiante
+
+    def _desenhar(self, tela):
         cam_x, cam_y = self.cam.na_tela()
         pulso = self._pulso()
         espera = self.espera if self.modo == ESPERANDO else None
@@ -430,6 +459,8 @@ class Partida:
             self.vento.desenhar(tela, self.est.tempo,
                                 self.fase.vx_em(self.est.x) > self.fase.vx * 1.1,
                                 self.cor_vento, 1.0 / 60.0)
+            if self.partitura is not None:
+                self.partitura.desenhar(tela, cam_x, cam_y, self.espera + self.est.tempo)
             self.ecos.desenhar(tela, cam_x, cam_y)
             mundo.desenhar_brilhos(tela, self.fase, cam_x, cam_y, self.pegos,
                                    self.espera + self.est.tempo)
@@ -438,6 +469,7 @@ class Partida:
                            rastro=self.rastro if self.morte is None and self.modo == JOGANDO else ())
             self.poeira.desenhar(tela, cam_x, cam_y)
             self.faiscas.desenhar(tela, cam_x, cam_y)
+            self.revoada.desenhar(tela, cam_x, cam_y)
             for dx, dy, texto in self.fase.dicas:
                 # a legenda da mecanica nova: escrita no mundo, passa com ele
                 if -200 <= dx - cam_x <= LARGURA + 200:

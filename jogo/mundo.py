@@ -18,28 +18,34 @@ ESTICA = 0.10         # quanto dura o esticar do corpo na saida do pulo
 AMASSA = 0.12         # e o amassar no pouso
 # chao desenhado por terreno.py: o caminho de lajes do bosque, ilhas de pedra
 # flutuando e a alvenaria da cidadela
-TERRENO_DESENHADO = {"bosque", "ilhas", "eclipse"}
+TERRENO_DESENHADO = {"bosque", "dunas", "ilhas", "geleira", "eclipse"}
 
 # Mundos com o ambiente trabalhado: colunas recuadas para o fundo, blocos com
 # sombra de contato e cacos sempre apoiados num leito, nunca soltos no ar.
 # (tema -> cor para onde o cenario recua, quanto recua, cores do leito dos cacos)
 AMBIENTE = {
     "bosque": ((24, 44, 48), 0.40, ((22, 44, 40), (66, 86, 82), (94, 114, 106))),
+    "dunas": ((214, 190, 150), 0.38, ((92, 50, 44), (140, 84, 58), (190, 128, 82))),
     "ilhas": ((118, 78, 112), 0.42, ((46, 33, 61), (69, 50, 87), (86, 66, 106))),
+    "geleira": ((30, 48, 90), 0.40, ((22, 36, 70), (48, 78, 124), (120, 168, 214))),
     "eclipse": ((26, 12, 44), 0.45, ((14, 6, 26), (28, 14, 46), (40, 24, 64))),
 }
 # no bosque o chao e terra firme: o leito dos cacos e o FUNDO de um fosso, que
 # desce ate o pe da tela (nas ilhas e na cidadela e uma prateleira no ar)
-FOSSO = {"bosque": terreno.fosso}
+FOSSO = {"bosque": terreno.fosso, "dunas": terreno.fosso_dunas, "geleira": terreno.fosso_geleira}
 # O mapa muda de cara a cada parte da musica (fase.ato): introducao, A, B, A'.
 # Quais enfeites (os numeros de enfeite_N.png) moram em cada ato...
 ENFEITES_DO_ATO = {
     # a trilha (placa, cerca, lampiao) -> a mata -> as ruinas -> o santuario
     # (os cogumelos, 8, sairam: liam-se como o cogumelo que fere)
     "bosque": ((3, 7, 1), (1, 2, 7), (4, 5, 6), (6, 1, 5, 2, 3)),
+    # a caravana (anforas, estandartes) -> o oasis -> as ruinas -> o acampamento
+    "dunas": ((1, 3), (1, 2, 4), (5, 2, 6), (4, 3, 6, 1)),
     # os cristais -> os cataventos -> as ruinas e os baloes -> a festa das lanternas
     # (o cristal, 1, e o catavento de pontas, 4, sairam: pareciam perigo)
     "ilhas": ((6, 2), (6, 3), (2, 3, 5), (5, 3, 2)),
+    # a trilha (lanternas, pinheirinhos) -> o acampamento -> as ruinas de gelo -> a aurora
+    "geleira": ((1, 2), (1, 2, 3), (4, 5, 6), (1, 3, 4, 6)),
     # a muralha (tochas, estandartes) -> a guarda -> o patio das gargulas -> a catedral
     # (o braseiro, 3, e a gargula, 4, sairam: chama e chifres pareciam perigo)
     "eclipse": ((1, 2), (1, 2, 5), (7, 5, 6), (6, 7, 5, 2)),
@@ -50,7 +56,11 @@ ENFEITES_DO_ATO = {
 # todos os perigos da fase, entao qualquer distribuicao continua justa.
 CACOS_DO_ATO = {
     "bosque": ((0,), (0, 1, 2), (3, 4, 1), (0, 3, 4, 2)),
+    # o cacto-rubi -> o espinheiro -> o vidro de raio e a cascavel -> tudo junto
+    "dunas": ((0,), (0, 1), (2, 3), (0, 1, 2, 3)),
     "ilhas": ((0, 1), (0, 1, 2), (3, 4), (0, 1, 2, 3, 4)),
+    # o cristal de ruido -> as lancas de gelo -> o espinheiro e a chama fria -> tudo
+    "geleira": ((0,), (0, 1), (2, 3), (0, 1, 2, 3)),
     "eclipse": ((0, 2), (0, 1, 2), (4, 3), (0, 1, 2, 3, 4)),
 }
 RAIO_AURA = 4         # o clarao em volta de cada perigo, em px
@@ -106,6 +116,11 @@ def preparar(fase):
     # e a colisao de cada caco passa a ser a silhueta do desenho desta fase
     for p in fase.perigos:
         p.perfil = arte.perfil_caco(p.quantidade, tema.perigo, tema.nome, FOLGA_CACO, p.variante)
+    tipos = {v[4] for v in fase.voadores}
+    for i in range(arte.QUADROS_ENXAME if "enxame" in tipos else 0):
+        arte.aura(arte.enxame(tema.nome, tema.perigo, i), cor_aura, RAIO_AURA)
+    for i in range(arte.QUADROS_PINGENTE if "pingente" in tipos else 0):
+        arte.aura(arte.pingente(tema.nome, tema.perigo, i), cor_aura, RAIO_AURA)
     for v in range(arte.variantes_bloco(tema.nome) if fase.blocos else 0):
         arte.bloco(tema.bloco, tema.chao_topo, tema.nome, v)
     amb = AMBIENTE.get(tema.nome)
@@ -217,6 +232,26 @@ def desenhar(tela, fase, est, cam_x, cam_y, pulso, espera=None, y_heroi=None, he
                 tela.blit(arte.aura(img, cor_aura, RAIO_AURA),
                           (p.x - cam_x - RAIO_AURA, p.y - cam_y - RAIO_AURA))
             tela.blit(img, (p.x - cam_x, p.y - cam_y))
+
+    # os pingentes: pendurados da laje, o pe dos cristais no pe da caixa
+    for vx, vy, vw, vh, tipo in fase.voadores:
+        if tipo == "pingente" and cam_x - 2 * TILE <= vx <= cam_x + LARGURA + TILE:
+            img = arte.pingente(tema.nome, tema.perigo, 0 if simples else int(est.tempo * 6 + vx * 0.01))
+            x = vx + vw * 0.5 - img.get_width() * 0.5 - cam_x
+            y = vy + vh - img.get_height() - cam_y
+            if not simples:
+                tela.blit(arte.aura(img, cor_aura, RAIO_AURA), (x - RAIO_AURA, y - RAIO_AURA))
+            tela.blit(img, (x, y))
+    # os enxames: pairam (fora da batida, como todo perigo) acima de quem corre
+    for vx, vy, vw, vh, tipo in fase.voadores:
+        if tipo == "enxame" and cam_x - TILE <= vx <= cam_x + LARGURA:
+            img = arte.enxame(tema.nome, tema.perigo, 0 if simples else int(est.tempo * 14 + vx * 0.07))
+            x = vx + vw * 0.5 - img.get_width() * 0.5 - cam_x
+            y = vy + vh * 0.5 - img.get_height() * 0.5 - cam_y
+            if not simples:
+                y += math.sin(est.tempo * 4.3 + vx * 0.05) * 3.0
+                tela.blit(arte.aura(img, cor_aura, RAIO_AURA), (x - RAIO_AURA, y - RAIO_AURA))
+            tela.blit(img, (x, y))
 
     # guias de "pule aqui": so as que ainda estao a frente de Leo
     if simples:

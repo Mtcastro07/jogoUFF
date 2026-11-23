@@ -38,6 +38,17 @@ SEMEADURA = {
     "nuvem": (58, 24, 0, None),
 }
 SEMEADURA_FASE = {
+    # a geleira: pinheiros nevados afundados nos morros, e as agulhas de gelo
+    "geleira": {
+        "longe": (40, 16, 5, None),
+        "perto": (84, 30, 10, None),
+    },
+    # o deserto e vazio: poucas pecas, bem espacadas, de pe na crista das dunas
+    "dunas": {
+        "longe": (96, 34, 3, None),
+        "perto": (132, 44, 5, None),
+        "nuvem": (120, 40, 0, None),
+    },
     # a cidadela e de pedra: as construcoes afundam pouco na colina, para as
     # ameias e as janelas acesas aparecerem
     "eclipse": {
@@ -56,6 +67,10 @@ SEMEADURA_FASE = {
 # As ilhas longe vieram quase pretas, mais escuras que as de perto: sem a nevoa
 # elas pareciam buracos no por do sol, e nao ilhas ao longe.
 NEVOA = {
+    # o frio azul apaga o que esta longe -- e recua o de perto, para o gelo
+    # do fundo nao disputar com a faixa em que o jogador le os perigos
+    "geleira": {"longe": ((34, 54, 104), 0.42), "perto": ((30, 50, 96), 0.32)},
+    "dunas": {"longe": ((176, 204, 186), 0.42)},        # o mormaco apaga o que esta longe
     "ilhas": {"longe": ((150, 92, 118), 0.5)},
 }
 VAO = W * 16             # a semeadura se repete so depois disso: nunca, na pratica
@@ -65,6 +80,11 @@ MARGEM = 64              # mais larga que qualquer peca: quem cruza a borda esqu
 # Ceu com mais de dois tons (altura 0 = topo da tela, 1 = pe). As ilhas pedem o
 # por do sol do GDD: roxo em cima, malva no meio, pessego rente as nuvens.
 CEUS = {
+    # a noite mais funda do jogo: quase preta em cima, azul de gelo no horizonte
+    "geleira": ((0.0, (6, 10, 30)), (0.5, (18, 32, 72)), (1.0, (56, 90, 140))),
+    # o unico ceu de dia: azul fundo em cima, turquesa, e a poeira clara no horizonte
+    "dunas": ((0.0, (26, 78, 126)), (0.42, (58, 140, 168)), (0.56, (150, 200, 190)),
+              (1.0, (236, 208, 156))),
     "ilhas": ((0.0, (58, 36, 82)), (0.55, (138, 82, 108)), (1.0, (224, 148, 128))),
 }
 
@@ -85,6 +105,18 @@ MURALHAS = {
     "eclipse": {"longe": (0.50, (96, 62, 50)), "perto": (0.575, (150, 92, 58))},
 }
 
+# Onde as outras fases tem colinas, o deserto tem DUNAS, em tres camadas: crista
+# em quina, a face de tras (a esquerda, de costas para o sol) na sombra e a
+# espinha da duna descendo em diagonal para perto de quem olha. Cada camada:
+# (pecas plantadas nela ou None, parallax, base em fracao da tela, peso do
+#  balanco da camera, altura, vao entre cristas, corpo, sombra, crista)
+DUNAS = {
+    "dunas": (("longe", 0.10, 0.515, 2.0, 15, 118, (228, 194, 150), (198, 162, 138), (248, 228, 186)),
+              (None, 0.17, 0.585, 2.5, 13, 150, (226, 174, 120), (186, 134, 104), (252, 220, 156)),
+              ("perto", 0.25, 0.660, 3.0, 15, 190, (214, 148, 92), (162, 102, 76), (253, 212, 138))),
+}
+CRISTAS_POR_VOLTA = 6    # a tira de cada camada se repete depois de tantas dunas
+
 # O astro anda devagar para a esquerda com a camera (parallax de 1%). Numa fase
 # longa isso o levaria para fora da tela -- a cidadela tem mais de 110 mil px --
 # entao, depois de DERIVA_LIVRE px de caminho, ele desacelera suave e para antes
@@ -101,6 +133,10 @@ NEUTRO = ((255, 255, 255), (0, 0, 0))
 CLIMA = {
     # a noite fica violeta nas ruinas e ganha o verde da aurora no final
     "bosque": (NEUTRO, NEUTRO, ((176, 190, 255), (20, 8, 40)), ((214, 255, 236), (0, 24, 22))),
+    # na quebra o vento levanta a areia e o dia fica ocre; no final ele limpa
+    "dunas": (NEUTRO, NEUTRO, ((255, 244, 230), (18, 6, 0)), ((255, 252, 248), (4, 6, 8))),
+    # a nevasca embranquece a quebra; no drop a aurora tinge tudo de verde
+    "geleira": (NEUTRO, NEUTRO, ((206, 220, 250), (44, 50, 66)), ((220, 255, 240), (0, 22, 22))),
     # o por do sol cai no crepusculo e volta num ultimo clarao dourado
     "ilhas": (NEUTRO, NEUTRO, ((176, 160, 232), (8, 0, 30)), ((255, 232, 200), (30, 10, 0))),
     # o eclipse sangra na parte B e esfria num azul de aco no final
@@ -110,11 +146,13 @@ CLIMA = {
 # ilhas cresce no ultimo clarao e o eclipse toma o ceu no final.
 ESCALA_ASTRO = {
     "bosque": (1.0, 1.0, 1.3, 1.1),
+    "dunas": (1.0, 1.0, 0.85, 1.25),
     "ilhas": (1.0, 1.0, 0.9, 1.4),
+    "geleira": (1.0, 1.0, 0.85, 1.2),
     "eclipse": (1.0, 1.0, 1.35, 1.8),
 }
 # nas ilhas o crepusculo da parte B traz as estrelas (0 = nenhuma, 1 = todas)
-NOITE = {"ilhas": (0.0, 0.0, 1.0, 0.0), "bosque": (1.0, 1.0, 1.0, 1.0), "eclipse": (1.0, 1.0, 1.0, 1.0)}
+NOITE = {"geleira": (1.0, 1.0, 0.45, 1.0), "dunas": (0.0, 0.0, 0.0, 0.0), "ilhas": (0.0, 0.0, 1.0, 0.0), "bosque": (1.0, 1.0, 1.0, 1.0), "eclipse": (1.0, 1.0, 1.0, 1.0)}
 PASSAGEM_CLIMA = 900.0        # px de mapa que a troca de clima leva (uns 19 tiles)
 
 
@@ -152,7 +190,8 @@ def cena(fase, x):
     nome = fase.tema.nome
     return {"clima": clima(fase, x),
             "astro": round(_entre_atos(fase, x, ESCALA_ASTRO.get(nome, (1.0,))) * 20) / 20,
-            "noite": _entre_atos(fase, x, NOITE.get(nome, (1.0,)))}
+            "noite": _entre_atos(fase, x, NOITE.get(nome, (1.0,))),
+            "aurora": _entre_atos(fase, x, AURORA_DO_ATO.get(nome, (1.0,)))}
 
 
 _escalados = {}
@@ -177,15 +216,20 @@ PERIODO_SERRA = 640
 SERRAS = {
     "bosque": (0.50, 46, (26, 40, 70), (44, 62, 96), (170, 190, 214), (22, 34, 66)),
     "eclipse": (0.50, 52, (30, 16, 44), (56, 32, 66), (150, 100, 84), (20, 9, 34)),
+    # nas dunas, a cordilheira azulada do outro lado do deserto, quase da cor do ceu
+    "dunas": (0.52, 40, (104, 150, 166), (134, 176, 180), (214, 222, 200), (150, 200, 190)),
+    # na geleira, os picos nevados, com a neve acesa pela lua
+    "geleira": (0.50, 56, (34, 54, 98), (62, 90, 140), (226, 238, 255), (20, 34, 74)),
 }
 # quem voa no ceu, e de que cor: passaros nas ilhas (a cor das ilhas distantes:
 # sao longe) e morcegos na cidadela, mais claros que a noite para aparecerem
-REVOADA = {"ilhas": (88, 54, 84), "eclipse": (70, 44, 98)}
+REVOADA = {"dunas": (40, 62, 92), "ilhas": (88, 54, 84), "eclipse": (70, 44, 98)}
 
 # Raios em volta do astro: (cor, quantos, raio de dentro, raio de fora, alfa).
 # Giram devagar, fora da batida; na cidadela e a coroa do eclipse, que estoura
 # junto com o astro. Sao luz, nao desenho: quase transparentes.
 RAIOS = {
+    "dunas": ((255, 246, 204), 10, 14, 42, 12),
     "ilhas": ((255, 214, 150), 9, 15, 44, 10),
     "eclipse": ((255, 190, 110), 12, 16, 34, 13),
 }
@@ -193,10 +237,22 @@ QUADROS_RAIOS = 12
 # halo da lua: (cor, raio) de fora para dentro, por cima do ceu
 HALO_LUA = {"bosque": (((24, 37, 70), 21), ((28, 42, 77), 17))}
 # bruma entre os morros do bosque: (altura em fracao da tela, cor, alfa)
-BRUMA = {"bosque": ((0.515, (86, 124, 132), 46), (0.60, (70, 112, 112), 38))}
+BRUMA = {"bosque": ((0.515, (86, 124, 132), 46), (0.60, (70, 112, 112), 38)),
+         "geleira": ((0.53, (110, 146, 200), 40), (0.62, (150, 184, 226), 30))}
 PERIODO_BRUMA = 200
 # estrela cadente: de quantos em quantos segundos, e quanto dura
-CADENTE = {"bosque": (11.0, 0.7), "eclipse": (17.0, 0.6)}
+CADENTE = {"bosque": (11.0, 0.7), "geleira": (13.0, 0.7), "eclipse": (17.0, 0.6)}
+
+# A AURORA da geleira: cortinas de luz ondulando devagar no alto do ceu, fora
+# da batida (o ceu respira, nao pisca). Cada cortina: (altura da borda acesa em
+# fracao da tela, comprimento da franja em px, cor da borda, cor do alto, alfa,
+# velocidade). A forca muda de ato em ato (AURORA_DO_ATO): fraca na introducao,
+# some na nevasca e explode no drop.
+AURORA = {
+    "geleira": ((0.30, 40, (120, 255, 196), (70, 170, 255), 120, 1.0),
+                (0.20, 30, (110, 200, 255), (150, 120, 255), 70, -0.7)),
+}
+AURORA_DO_ATO = {"geleira": (0.6, 1.0, 0.25, 1.6)}
 
 
 _raios_prontos = {}
@@ -388,7 +444,7 @@ class Cenario:
             self.slots[prefixo] = fica
 
     def desenhar(self, tela, cam_x, cam_y, tempo, pulso, simples=False, clima=None, astro=1.0,
-                 noite=None):
+                 noite=None, aurora=1.0):
         """
         `pulso` vai de 1 (na batida) a 0 (entre batidas). `simples`: a versao
         alpha -- um fundo PARADO: o ceu, o astro e os morros lisos, sem nada
@@ -411,7 +467,7 @@ class Cenario:
             return
 
         if noite is None:
-            noite = 0.0 if tema.nome == "ilhas" else 1.0
+            noite = NOITE.get(tema.nome, (1.0,))[0]
         if noite > 0.02:
             cor = arte.clarear(tema.ceu, 0.7)
             # anoitecendo, as estrelas acendem uma a uma
@@ -419,6 +475,9 @@ class Cenario:
                 sx = (x - cx * 0.05) % (W * 2)
                 if sx < W and math.sin(tempo * 2.0 + fase) > -0.3:   # piscam
                     b.fill(cor, (int(sx), int(y + dy), 1, 1))
+
+        if tema.nome in AURORA:
+            self._aurora(b, cx, dy, tempo, aurora)
 
         # sol / lua, respirando junto com a batida
         sx = int(W * 0.74 - _deriva_astro(cx))
@@ -472,6 +531,8 @@ class Cenario:
                 topo = int(H * frac + dy * k_dy)
                 self._muralha(b, cx * parallax, topo, cor, janela)
                 self._apoiar(b, prefixo, cx * parallax, topo, 0, 0)
+        elif tema.nome in DUNAS:
+            self._camadas_de_dunas(b, cx, dy)
         elif self.mar:
             # ilhas: as distantes, o mar de nuvens la embaixo, e as proximas
             self._apoiar(b, "longe", *longe)
@@ -494,7 +555,7 @@ class Cenario:
             b.fill(clima[1], special_flags=pygame.BLEND_RGB_ADD)
         tela.blit(pygame.transform.scale(b, (LARGURA, ALTURA)), (0, 0))
 
-    def _apoiar(self, b, prefixo, desloc, base, amp, freq):
+    def _apoiar(self, b, prefixo, desloc, base, amp, freq, altura=None):
         """
         Planta as pecas de `prefixo` com a BASE na linha da colina daquela
         camada -- e por isso que elas andam no parallax certo sem conta
@@ -514,8 +575,46 @@ class Cenario:
             if flutua:
                 b.blit(img, (int(x), int(base - altitude) - img.get_height()))
                 continue
-            y = _altura(x + desloc, base, amp, freq) if amp else base
+            if altura is not None:
+                y = altura(x + img.get_width() * 0.5 + desloc)     # o relevo proprio da camada
+            else:
+                y = _altura(x + desloc, base, amp, freq) if amp else base
             b.blit(img, (int(x), int(y) - img.get_height() + afundar))
+
+    _franjas = {}
+
+    @classmethod
+    def _franja(cls, comprimento, borda, alto, alfa):
+        """[surfaces 1 x comprimento]: a franja da cortina, em 6 niveis de brilho."""
+        chave = (comprimento, borda, alto, alfa)
+        if chave not in cls._franjas:
+            niveis = []
+            for n in range(6):
+                s = pygame.Surface((1, comprimento), pygame.SRCALPHA)
+                for y in range(comprimento):
+                    t = y / (comprimento - 1)                 # 0 no alto, 1 na borda acesa
+                    cor = tuple(int(a + (b - a) * t ** 1.6) for a, b in zip(alto, borda))
+                    a = alfa * (n + 1) / 6.0 * (t ** 2.2 if t < 0.93 else 1.0)
+                    s.set_at((0, y), (*cor, int(a)))
+                niveis.append(s)
+            cls._franjas[chave] = niveis
+        return cls._franjas[chave]
+
+    def _aurora(self, b, cx, dy, tempo, forca):
+        """As cortinas da aurora: uma franja por coluna do ceu, ondulando."""
+        if forca <= 0.02:
+            return
+        for frac, comprimento, borda, alto, alfa, vel in AURORA[self.tema.nome]:
+            niveis = self._franja(comprimento, borda, alto, alfa)
+            base = H * frac + dy
+            t = tempo * vel
+            for x in range(W):
+                u = x + cx * 0.02
+                y = base + 9.0 * math.sin(u * 0.019 + t * 0.21) + 5.0 * math.sin(u * 0.047 - t * 0.37)
+                luz = (0.5 + 0.5 * math.sin(u * 0.083 + t * 0.6)) * (0.6 + 0.4 * math.sin(u * 0.011 - t * 0.15))
+                n = int(min(5.0, luz * forca * 5.5))
+                if n > 0:
+                    b.blit(niveis[n], (x, int(y) - comprimento))
 
     _serras = {}
 
@@ -642,6 +741,87 @@ class Cenario:
                     b.fill(capim_cor, (x, y - 1 - (n & 1), 1, 1 + (n & 1)))   # um tufo
                 elif n == 4:
                     b.fill(luar_forte, (x, y + 3, 1, 1))                      # uma pedrinha
+
+    _dunas = {}
+
+    @classmethod
+    def _duna(cls, chave, amp, vao, corpo, sombra, crista):
+        """
+        (tira, alturas): uma volta inteira de dunas da camada, desenhada uma vez.
+        O vento sopra da direita: cada duna sobe comprida e suave pela direita
+        (a encosta do sol, com as ondulacoes do vento) e cai curta e ingreme pela
+        esquerda -- a face de tras, numa sombra que acompanha a encosta e se
+        desfaz em pontilhado. `alturas[u]` e quanto o relevo sobe acima da base
+        em cada x da tira (as pecas se apoiam nele).
+        """
+        pronto = cls._dunas.get(chave)
+        if pronto is not None:
+            return pronto
+        rnd = random.Random(chave)
+        volta = vao * CRISTAS_POR_VOLTA
+        cristas = [(k * vao + rnd.uniform(-0.22, 0.22) * vao, amp * rnd.uniform(0.5, 1.0),
+                    vao * rnd.uniform(0.30, 0.42), vao * rnd.uniform(1.1, 1.6))
+                   for k in range(CRISTAS_POR_VOLTA)]
+        alto = amp + 12
+        tira = pygame.Surface((volta, alto), pygame.SRCALPHA)
+        meio_tom = tuple((a + b) // 2 for a, b in zip(corpo, sombra))
+        ondula = tuple((3 * a + b) // 4 for a, b in zip(corpo, sombra))
+        luz = tuple((a + b) // 2 for a, b in zip(corpo, crista))
+        alturas = []
+        for u in range(volta):
+            melhor = (0.0, None)
+            for uc, h, esq, dir_ in cristas:
+                d = (u - uc + volta / 2) % volta - volta / 2      # a tira da a volta
+                if d < 0:
+                    t = -d / esq
+                    sobe = h * (1.0 - t ** 1.7) if t < 1.0 else 0.0
+                else:
+                    t = d / dir_
+                    sobe = h * (0.5 + 0.5 * math.cos(math.pi * t)) if t < 1.0 else 0.0
+                if sobe > melhor[0]:
+                    melhor = (sobe, (d, h, esq))
+            sobe, dona = melhor
+            alturas.append(sobe)
+            y = alto - 1 - int(round(sobe))
+            tira.fill(corpo, (u, y, 1, alto - y))
+            if dona is None:
+                continue
+            d, h, esq = dona
+            if d < 0:
+                # a face de tras: uma faixa de sombra que segue a encosta
+                fundo = 6 + int(5 * (1.0 + d / esq)) + ((u * 2654435761 >> 9) & 1)
+                fundo = min(fundo, alto - y)
+                tira.fill(sombra, (u, y, 1, fundo))
+                for k in range(3):                               # e some em pontilhado
+                    if (u + k) % (k + 2) == 0 and y + fundo + k < alto:
+                        tira.set_at((u, y + fundo + k), meio_tom)
+            else:
+                tira.set_at((u, y), crista)
+                if d < h * 1.2:
+                    tira.set_at((u, y + 1), luz)                 # o sol pega o ombro da crista
+                # as ondulacoes do vento, paralelas a encosta
+                for prof in (5, 10, 15):
+                    if y + prof < alto and ((u + prof * 2) // 4) % 3 == 0:
+                        tira.set_at((u, y + prof), ondula)
+        pronto = cls._dunas[chave] = (tira, alturas)
+        return pronto
+
+    def _camadas_de_dunas(self, b, cx, dy):
+        """As tres camadas do deserto, da mais distante para a mais proxima, com as pecas."""
+        for i, (pecas, parallax, frac, k_dy, amp, vao, corpo, sombra, crista) in enumerate(
+                DUNAS[self.tema.nome]):
+            tira, alturas = self._duna(f"{self.tema.nome}/{i}", amp, vao, corpo, sombra, crista)
+            volta = tira.get_width()
+            desloc = cx * parallax
+            base = int(H * frac + dy * k_dy)
+            x0 = -int(desloc) % volta
+            for x in (x0 - volta, x0):
+                if x < W and x + volta > 0:
+                    b.blit(tira, (x, base + 1 - tira.get_height()))
+            b.fill(corpo, (0, base, W, H - base))
+            if pecas:
+                self._apoiar(b, pecas, desloc, base, 0, 0,
+                             altura=lambda u: base - alturas[int(u) % volta])
 
     _tijolos = {}
 

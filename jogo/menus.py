@@ -16,6 +16,20 @@ from .config import (LARGURA, ALTURA, BRANCO, CINZA, AMARELO, VERDE, VERMELHO,
                      AZUL, COR_DIFICULDADE, COR_NOTA, CONTORNO)
 
 
+def preaquecer():
+    """
+    Na abertura do jogo, antes da primeira imagem: monta todas as fases e
+    pinta uma vez o fundo de cada mundo (as faixas de serra, dunas e nuvens
+    ficam guardadas). Sem isso, o primeiro quadro do menu e a primeira troca
+    de carta na selecao montavam tudo na hora -- e o quadro engasgava.
+    """
+    rascunho = pygame.Surface((LARGURA, ALTURA)).convert()
+    for f in fases.todas():
+        Cenario(f.tema).desenhar(rascunho, 0.0, 0.0, 0.0, 0.0)
+        efeitos.Ar(f.tema).desenhar(rascunho, 0.0, 0.0, 0.0)
+        ceu(f.tema)
+
+
 class Tela:
     """Base: cenario rolando ao fundo e, opcionalmente, um menu de botoes."""
 
@@ -77,9 +91,9 @@ class Tela:
 class TelaMenu(Tela):
     def __init__(self, app):
         x = LARGURA // 2 - 200
-        super().__init__(app, botoes=[ui.Botao("JOGAR", x, 398, 400, 56, VERDE),
-                                      ui.Botao("OPCOES", x, 464, 400, 56, AZUL),
-                                      ui.Botao("SAIR", x, 530, 400, 56, VERMELHO)])
+        super().__init__(app, botoes=[ui.Botao("JOGAR", x, 418, 400, 52, VERDE),
+                                      ui.Botao("OPCOES", x, 480, 400, 52, AZUL),
+                                      ui.Botao("SAIR", x, 542, 400, 52, VERMELHO)])
 
     def escolher(self, rotulo):
         if rotulo == "JOGAR":
@@ -91,55 +105,49 @@ class TelaMenu(Tela):
 
     def desenhar(self, tela):
         super().desenhar(tela)
-        y = 220 + math.sin(self.tempo * 2.0) * 6
+        y = 200 + math.sin(self.tempo * 2.0) * 4
         logo = ui.imagem("logo.png", 3)
         if logo is not None:
-            tela.blit(logo, logo.get_rect(center=(LARGURA // 2, int(y) - 40)))
+            # flutua sem nunca encostar no alto da tela nem no lema
+            tela.blit(logo, logo.get_rect(center=(LARGURA // 2, int(y))))
         else:
             ui.desenhar_texto(tela, "RHYTHM STRIKER", 72, LARGURA // 2, y, self.fase.tema.destaque)
         # embaixo dos botoes: o quanto do Rhythm Kingdom ja foi vencido
         total = len(fases.todas())
-        completas, pontos = self.app.save.progresso(total)
+        completas, pontos = self.app.save.progresso([f.cancao for f in fases.todas()])
         # o lema, logo abaixo do logo: as palavras entram uma a cada batida do fundo
-        lema = ("UM BOTAO.", "TRES MUNDOS.", "NO RITMO.")
+        conta = {3: "TRES", 4: "QUATRO", 5: "CINCO", 6: "SEIS"}.get(total, str(total))
+        lema = ("UM BOTAO.", f"{conta} MUNDOS.", "NO RITMO.")
         quantas = min(len(lema), int(self.tempo * 2.0))
         if quantas:
-            self.titulo(tela, "  ".join(lema[:quantas]), 20, 376, self.fase.tema.destaque)
+            self.titulo(tela, "  ".join(lema[:quantas]), 20, 396, self.fase.tema.destaque)
         if pontos:
             # o quanto do Rhythm Kingdom ja foi vencido: um marco por mundo
             cx = LARGURA // 2 - (total - 1) * 22
             for i in range(total):
                 feito = i < completas
-                pygame.draw.rect(tela, CONTORNO, (cx + i * 44 - 11, 598, 22, 22))
-                pygame.draw.rect(tela, AMARELO if feito else (70, 74, 104), (cx + i * 44 - 8, 601, 16, 16))
+                pygame.draw.rect(tela, CONTORNO, (cx + i * 44 - 11, 606, 22, 22))
+                pygame.draw.rect(tela, AMARELO if feito else (70, 74, 104), (cx + i * 44 - 8, 609, 16, 16))
                 if feito:
-                    pygame.draw.rect(tela, BRANCO, (cx + i * 44 - 8, 601, 16, 4))
-            self.titulo(tela, f"{completas} DE {total} MUNDOS VENCIDOS  -  {pontos} PTS", 18, 640,
+                    pygame.draw.rect(tela, BRANCO, (cx + i * 44 - 8, 609, 16, 4))
+            self.titulo(tela, f"{completas} DE {total} MUNDOS VENCIDOS  -  {pontos} PTS", 18, 646,
                         AMARELO if completas == total else ui.APAGADO)
         ui.dicas(tela, (("SETAS", "ESCOLHEM"), ("ENTER", "CONFIRMA"), ("F11", "TELA CHEIA")), ALTURA - 36)
 
 
 # ----------------------------------------------------------------- opcoes
 class TelaOpcoes(Tela):
-    """
-    Volumes e o ATRASO DO AUDIO. Num jogo de ritmo, som que chega atrasado
-    (fone sem fio, TV) estraga tudo: aqui um quadrado pisca e um tique toca, e
-    o jogador aumenta o atraso ate os dois baterem. Na partida, a musica entra
-    adiantada esse mesmo tanto.
-    """
+    """So o volume da musica: setas para os lados mudam, ESC (ou VOLTAR) sai."""
     # (rotulo, chave em save.opcoes, minimo, maximo, passo)
-    LINHAS = (("MUSICA", "musica", 0, 10, 1), ("EFEITOS", "sfx", 0, 10, 1),
-              ("ATRASO DO AUDIO", "atraso", -100, 300, 10), ("VOLTAR", None, 0, 0, 0))
-    PERIODO = 0.6          # segundos entre um pisca e outro do teste de atraso
+    LINHAS = (("VOLUME DA MUSICA", "musica", 0, 10, 1), ("VOLTAR", None, 0, 0, 0))
 
     def __init__(self, app):
         super().__init__(app)
         self.indice = 0
         self.opcoes = app.save.opcoes
-        self.tocou = -1            # o ultimo ciclo em que o tique ja tocou
 
     def _y(self, i):
-        return 250 + i * 76
+        return 300 + i * 90
 
     def _mudar(self, d):
         rotulo, chave, minimo, maximo, passo = self.LINHAS[self.indice]
@@ -149,8 +157,7 @@ class TelaOpcoes(Tela):
         if novo != self.opcoes[chave]:
             self.opcoes[chave] = novo
             audio.aplicar(self.opcoes)
-            if chave != "atraso":
-                audio.tocar("navegar")       # ja se ouve o volume novo
+            audio.tocar("navegar")
 
     def _sair(self):
         self.app.save.salvar()
@@ -184,20 +191,10 @@ class TelaOpcoes(Tela):
                         else:               # metade esquerda diminui, direita aumenta
                             self._mudar(1 if mx > LARGURA // 2 + 100 else -1)
 
-    def atualizar(self, dt):
-        super().atualizar(dt)
-        # o teste de atraso: o tique toca `atraso` ANTES do pisca, para ser
-        # ouvido junto com ele quando o numero esta certo
-        if self.LINHAS[self.indice][1] == "atraso":
-            ciclo = int((self.tempo + self.opcoes["atraso"] / 1000.0) / self.PERIODO)
-            if ciclo != self.tocou:
-                self.tocou = ciclo
-                audio.tocar("navegar")
-
     def desenhar(self, tela):
         super().desenhar(tela)
         destaque = self.fase.tema.destaque
-        self.titulo(tela, "OPCOES", 56, 130, destaque)
+        self.titulo(tela, "OPCOES", 56, 160, destaque)
         x, w = LARGURA // 2 - 380, 760
         for i, (rotulo, chave, minimo, maximo, passo) in enumerate(self.LINHAS):
             y = self._y(i)
@@ -211,27 +208,15 @@ class TelaOpcoes(Tela):
             ui.desenhar_texto(tela, rotulo, 22, x + 36, y, cor, "esquerda")
             valor = self.opcoes[chave]
             bx, bw = x + 400, 230
-            if chave == "atraso":
-                ui.desenhar_texto(tela, f"{valor:+d} MS", 24, bx + bw // 2, y, cor)
-            else:
-                for k in range(10):          # dez degraus de volume
-                    cheio = k < valor
-                    pygame.draw.rect(tela, CONTORNO, (bx + k * 23 - 1, y - 13, 20, 26))
-                    pygame.draw.rect(tela, (destaque if foco else ui.APAGADO) if cheio
-                                     else (70, 74, 104), (bx + k * 23 + 1, y - 11, 16, 22))
+            for k in range(10):          # dez degraus de volume
+                cheio = k < valor
+                pygame.draw.rect(tela, CONTORNO, (bx + k * 23 - 1, y - 13, 20, 26))
+                pygame.draw.rect(tela, (destaque if foco else ui.APAGADO) if cheio
+                                 else (70, 74, 104), (bx + k * 23 + 1, y - 11, 16, 22))
             if foco:
                 vai = int(3 * math.sin(self.tempo * 8.0))
                 ui.desenhar_texto(tela, "<", 26, bx - 30 - vai, y, destaque)
                 ui.desenhar_texto(tela, ">", 26, bx + bw + 30 + vai, y, destaque)
-        if self.LINHAS[self.indice][1] == "atraso":
-            # o quadrado que pisca no tempo: o tique tem de ser ouvido junto
-            fase = (self.tempo % self.PERIODO) / self.PERIODO
-            aceso = fase < 0.18
-            cx, cy = x + w + 60, self._y(2)
-            pygame.draw.rect(tela, CONTORNO, (cx - 27, cy - 27, 54, 54))
-            pygame.draw.rect(tela, BRANCO if aceso else (70, 74, 104), (cx - 22, cy - 22, 44, 44))
-            self.titulo(tela, "AUMENTE ATE OUVIR O TIQUE JUNTO COM O QUADRADO", 18, 580, ui.APAGADO)
-            self.titulo(tela, "FONE SEM FIO OU TV COSTUMAM PEDIR DE +100 A +250 MS", 16, 610, ui.APAGADO)
         ui.dicas(tela, (("SETAS", "ESCOLHEM E MUDAM"), ("ESC", "VOLTA")), ALTURA - 36)
 
 
@@ -254,12 +239,18 @@ class TelaFases(Tela):
         self.sob_mouse = self._carta_em(app.mouse())
 
     def _rect(self, i):
+        # ate tres cartas, o tamanho de sempre; com mais mundos elas estreitam
+        # para caberem todas na tela (o que vai dentro se ajusta a largura)
         n = len(self.lista)
-        x0 = (LARGURA - n * self.LARG - (n - 1) * self.VAO) // 2
-        return pygame.Rect(x0 + i * (self.LARG + self.VAO), 190, self.LARG, self.ALT)
+        vao = self.VAO if n <= 3 else 18
+        larg = min(self.LARG, (LARGURA - 64 - (n - 1) * vao) // n)
+        x0 = (LARGURA - n * larg - (n - 1) * vao) // 2
+        return pygame.Rect(x0 + i * (larg + vao), 190, larg, self.ALT)
 
     def _carta_em(self, pos):
-        """O indice da carta embaixo de `pos`, ou None."""
+        """O indice da carta embaixo de `pos`, ou None (a escolhida conta do tamanho em que aparece)."""
+        if self._rect(self.indice).inflate(20, 20).move(0, -14).collidepoint(pos):
+            return self.indice
         for i in range(len(self.lista)):
             if self._rect(i).collidepoint(pos):
                 return i
@@ -352,41 +343,69 @@ class TelaFases(Tela):
         pygame.draw.rect(tela, f.tema.chao_topo, (amostra.x, amostra.bottom - 30, amostra.w, 5))
         emblema = arte.png("ui", f"emblema_{f.cancao}.png")
         if emblema is not None:
-            tela.blit(emblema, emblema.get_rect(center=(amostra.centerx + 60, amostra.centery)))
+            tela.blit(emblema, emblema.get_rect(center=(amostra.centerx + amostra.w * 3 // 16,
+                                                        amostra.centery)))
         else:
             tela.blit(arte.caco(1, f.tema.perigo), (amostra.centerx + 50, amostra.bottom - 78))
-        arte.desenhar_heroi(tela, "parado", self.tempo * 8, amostra.x + 70, amostra.bottom - 30)
+        arte.desenhar_heroi(tela, "parado", self.tempo * 8, amostra.x + amostra.w * 7 // 32,
+                            amostra.bottom - 30)
         pygame.draw.rect(tela, cor, amostra, 2)
 
         cx = r.centerx
-        ui.desenhar_texto(tela, f.nome, 22, cx, r.y + 172, BRANCO)
-        # a dificuldade em marcos (1 a 3) e o andamento: o que o jogador vai sentir
+        ui.desenhar_texto_ajustado(tela, f.nome, 22, cx, r.y + 172, r.w - 36, BRANCO)
+        # a dificuldade em marcos (um por degrau da escala) e o andamento: o que
+        # o jogador vai sentir
+        # o que cabe na carta: ela estreita quando ha muitos mundos, e ai a
+        # dificuldade e o placar quebram em duas linhas em vez de a letra sumir
+        util = r.w - 44
+        niveis = len(COR_DIFICULDADE)
         nivel = list(COR_DIFICULDADE).index(f.dificuldade) + 1
-        rotulo = ui.texto(f"{f.dificuldade}  {f.bpm:.0f} BPM", 18, cor)
-        x0 = cx - (rotulo.get_width() + 3 * 16 + 10) // 2
-        for i in range(3):
-            pygame.draw.rect(tela, CONTORNO, (x0 + i * 16 - 1, r.y + 197, 12, 14))
-            pygame.draw.rect(tela, cor if i < nivel else (70, 74, 104), (x0 + i * 16, r.y + 198, 10, 12))
-        tela.blit(rotulo, (x0 + 3 * 16 + 10, r.y + 204 - rotulo.get_height() // 2))
-        rec = self.app.save.recorde(f.ident)
+        marcos = niveis * 14 + 8
+
+        def marcadores(x0, y):
+            for i in range(niveis):
+                pygame.draw.rect(tela, CONTORNO, (x0 + i * 14 - 1, y - 7, 12, 14))
+                pygame.draw.rect(tela, cor if i < nivel else (70, 74, 104), (x0 + i * 14, y - 6, 10, 12))
+
+        bpm = f"{f.bpm:.0f} BPM"
+        junto = ui.texto(f"{f.dificuldade}  {bpm}", 16, cor)
+        if junto.get_width() + marcos <= util:
+            x0 = cx - (junto.get_width() + marcos) // 2
+            marcadores(x0, r.y + 204)
+            tela.blit(junto, (x0 + marcos, r.y + 204 - junto.get_height() // 2))
+            y = r.y + 264                     # o centro da medalha
+        else:
+            ui.desenhar_texto(tela, f.dificuldade, 16, cx, r.y + 198, cor)
+            rotulo = ui.texto(bpm, 16, cor)
+            x0 = cx - (rotulo.get_width() + marcos) // 2
+            marcadores(x0, r.y + 220)
+            tela.blit(rotulo, (x0 + marcos, r.y + 220 - rotulo.get_height() // 2))
+            y = r.y + 266
+        rec = self.app.save.recorde(f.cancao)
         nota = rec["nota"]
         medalha = ui.imagem(f"nota_{nota.lower()}.png") if nota != "-" else None
         if medalha is not None:
-            tela.blit(medalha, medalha.get_rect(center=(cx, r.y + 264)))
+            tela.blit(medalha, medalha.get_rect(center=(cx, y)))
         else:   # ainda sem nota: o "?" no quadradinho
-            if not ui.moldura(tela, "padrao", cx - 32, r.y + 232, 64, 64):
-                ui.painel(tela, cx - 32, r.y + 232, 64, 64, borda=COR_NOTA[nota])
-            ui.desenhar_texto(tela, "?" if nota == "-" else nota, 36, cx, r.y + 264, COR_NOTA[nota])
-        ui.desenhar_texto_ajustado(
-            tela, f"{rec['melhor']:.0f}%  -  {rec['pontos']} PTS  -  ECOS {rec['ecos']}/{len(f.brilhos)}",
-            16, cx, r.y + 314, r.w - 36, ui.APAGADO)
+            if not ui.moldura(tela, "padrao", cx - 32, y - 32, 64, 64):
+                ui.painel(tela, cx - 32, y - 32, 64, 64, borda=COR_NOTA[nota])
+            ui.desenhar_texto(tela, "?" if nota == "-" else nota, 36, cx, y, COR_NOTA[nota])
+        placar = f"{rec['melhor']:.0f}%  -  {rec['pontos']} PTS"
+        ecos = f"ECOS {rec['ecos']}/{len(f.brilhos)}"
+        if ui.texto(f"{placar}  -  {ecos}", 16, ui.APAGADO).get_width() <= util:
+            ui.desenhar_texto(tela, f"{placar}  -  {ecos}", 16, cx, y + 50, ui.APAGADO)
+            y += 66
+        else:
+            ui.desenhar_texto_ajustado(tela, placar, 16, cx, y + 42, util, ui.APAGADO)
+            ui.desenhar_texto_ajustado(tela, ecos, 16, cx, y + 59, util, ui.APAGADO)
+            y += 74
         # o melhor progresso tambem como barra: de longe ja se ve quanto falta
         bw = r.w - 90
-        pygame.draw.rect(tela, CONTORNO, (cx - bw // 2 - 2, r.y + 328, bw + 4, 10))
-        pygame.draw.rect(tela, (70, 74, 104), (cx - bw // 2, r.y + 330, bw, 6))
-        pygame.draw.rect(tela, f.tema.destaque, (cx - bw // 2, r.y + 330, int(bw * rec["melhor"] / 100.0), 6))
-        ui.desenhar_texto_ajustado(tela, f.trilha.titulo, 18, cx, r.y + 360, r.w - 30, AMARELO)
-        ui.desenhar_texto_ajustado(tela, f.trilha.artista, 16, cx, r.y + 388, r.w - 30, ui.APAGADO)
+        pygame.draw.rect(tela, CONTORNO, (cx - bw // 2 - 2, y - 5, bw + 4, 10))
+        pygame.draw.rect(tela, (70, 74, 104), (cx - bw // 2, y - 3, bw, 6))
+        pygame.draw.rect(tela, f.tema.destaque, (cx - bw // 2, y - 3, int(bw * rec["melhor"] / 100.0), 6))
+        ui.desenhar_texto_ajustado(tela, f.trilha.titulo, 18, cx, y + 22, util, AMARELO)
+        ui.desenhar_texto_ajustado(tela, f.trilha.artista, 16, cx, y + 44, util, ui.APAGADO)
         if not sel:
             # as outras recuam: um veu escuro por cima, para a escolhida mandar
             veu = pygame.Surface(r.size, pygame.SRCALPHA)
@@ -528,4 +547,4 @@ class TelaGameOver(Tela):
         for i, (rotulo, valor) in enumerate(campos):
             cx = x + w * (0.19 + i * 0.22) + (30 if i else 0)
             ui.desenhar_texto(tela, rotulo, 16, cx, y + 40, CINZA)
-            ui.desenhar_texto(tela, valor, 22, cx, y + 80, BRANCO)
+            ui.desenhar_texto_ajustado(tela, valor, 22, cx, y + 80, 250 if i == 0 else 160, BRANCO)

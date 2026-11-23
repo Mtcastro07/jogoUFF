@@ -1,7 +1,8 @@
 """
 Audio: a trilha de cada fase e os efeitos sonoros.
 
-As faixas sao da NCS (NoCopyrightSounds) e ficam em assets/music/. A fase e
+As faixas sao da NCS (NoCopyrightSounds) -- menos as das dunas e da geleira, que
+sao originais, compostas para o jogo -- e ficam em assets/music/. A fase e
 uma grade de batidas que comeca no tempo 0, mas a musica tem uma introducao:
 `offset` e o segundo da primeira batida forte e `compasso_inicial` quantos
 compassos de 4 batidas pulamos antes de a fase comecar. A regra e uma so:
@@ -24,7 +25,7 @@ EFEITOS = ("pulo", "perfeito", "bom", "erro", "quebra",
 
 
 class Trilha:
-    """Uma faixa da NCS: creditos, andamento e onde a fase entra nela."""
+    """Uma faixa: creditos, andamento e onde a fase entra nela."""
 
     def __init__(self, titulo, artista, bpm, offset, bpm_grade, compasso_inicial):
         self.titulo = titulo
@@ -47,20 +48,43 @@ class Trilha:
 TRILHAS = {
     # O bosque (a fase que ensina) e a faixa mais calma possivel: lo-fi a
     # 84,105 BPM (medido: a 84 redondo a batida escorrega meio segundo ate o
-    # fim). A fase entra no primeiro compasso: introducao (0-2), A com o
-    # grave (3-18), B na quebra sem grave (19-34), A' com o grave de novo.
-    "bosque": Trilha("Cruising", "Dosi & Aisake", bpm=84.105, offset=2.831,
-                     bpm_grade=84.105, compasso_inicial=0),
-    # As ilhas (110 BPM, a fase media do GDD) entram na subida da introducao
-    # (compasso 8) e vao ate o fim da faixa: A no primeiro drop (compasso 16),
-    # B na quebra (40), A' no segundo drop (48).
+    # fim). A faixa do jogo e uma EDICAO da original, para a primeira fase ser
+    # curta (ferramentas/geradores/editar_musica.py; a original fica em
+    # ferramentas/musica_fonte): sairam os compassos 15-18 e 27-42. Na faixa
+    # editada: introducao (2), A com o grave (3-14), a quebra sem grave
+    # (15-22) e o fim do A' (23-30). A fase entra no compasso 2.
+    # O offset vai 7 ms adiante do medido (2,831): `inicio` conta os 2 compassos
+    # a 84,105, e no arquivo eles sao de 84 (a faixa e de 48 kHz e toca 0,13%
+    # mais rapido no mixer de 44,1 kHz).
+    "bosque": Trilha("Cruising", "Dosi & Aisake", bpm=84.105, offset=2.838,
+                     bpm_grade=84.105, compasso_inicial=2),
+    # As dunas (96 BPM, entre o bosque e as ilhas) tem trilha ORIGINAL, composta
+    # por sintese na mesma grade da fase (ferramentas/geradores/compor_dunas.py):
+    # a batida 0 cai em 0,100 s do arquivo e o andamento e cravado. Introducao
+    # (compassos 0-3), A com a levada inteira (4-15), B na quebra (16-27), A'
+    # com palmas (28-39) e o golpe final na batida 160.
+    "dunas": Trilha("Chocalho das Dunas", "Trilha original", bpm=96, offset=0.100,
+                    bpm_grade=96, compasso_inicial=0),
+    # As ilhas (110 BPM, a fase media do GDD) tocam uma EDICAO da faixa, sem o
+    # "balanco" depois do primeiro drop (compassos 32-39 da original; veja
+    # ferramentas/geradores/editar_musica.py). Na faixa editada: a fase entra
+    # no fim da subida (compasso 12), A no primeiro drop (16), B na quebra
+    # (32) e A' no segundo drop (40).
     "ilhas": Trilha("Castle", "Clarx & Harddope", bpm=110, offset=0.530,
-                    bpm_grade=110, compasso_inicial=8),
-    # A cidadela (150 BPM, a final) e sombria e epica: entra na segunda metade
-    # da batida (compasso 24), A no primeiro drop (40), B na quebra (64), A'
-    # no ultimo drop (80) e no fim da faixa.
+                    bpm_grade=110, compasso_inicial=12),
+    # A geleira (128 BPM, entre as ilhas e a cidadela) tambem tem trilha
+    # ORIGINAL (ferramentas/geradores/compor_geleira.py), um trance de cristal
+    # na grade da fase: introducao (compassos 0-7), A (8-23), B na quebra sem
+    # bumbo (24-35, com a subida no 32), A' no drop (36-51), golpe na batida 208.
+    "geleira": Trilha("Aurora de Cristal", "Trilha original", bpm=128, offset=0.100,
+                      bpm_grade=128, compasso_inicial=0),
+    # A cidadela (150 BPM, a final) e sombria e epica. A faixa do jogo e uma
+    # EDICAO da original sem o pos-drop do primeiro drop (compassos 56-63; veja
+    # ferramentas/geradores/editar_musica.py). Na faixa editada: a fase entra
+    # na descida que prepara o drop (compasso 32), A no primeiro drop (40-55),
+    # B na quebra (56-71), A' no segundo drop (72-87) e no pos-drop ate o fim.
     "eclipse": Trilha("Ark", "Ship Wrek & Zookeepers", bpm=150, offset=0.078,
-                      bpm_grade=150, compasso_inicial=24),
+                      bpm_grade=150, compasso_inicial=32),
 }
 
 
@@ -70,16 +94,14 @@ class Audio:
         self.sons = {}
         self.tocando = False
         self.vol_musica = 1.0     # 0..1, da tela de opcoes (multiplica o volume da config)
-        self.vol_sfx = 1.0
-        self.atraso = 0.0         # segundos que o som demora a chegar ao ouvido
+        self.vol_sfx = 1.0        # os efeitos tocam sempre no volume da config
+        self.atraso = 0.0         # a musica entra exatamente no inicio da fase
 
     def aplicar(self, opcoes):
-        """Poe em uso as opcoes do jogador (save.opcoes): volumes e atraso do audio."""
+        """Poe em uso a unica opcao do jogador (save.opcoes): o volume da musica.
+        Os efeitos e o atraso do audio nao sao mais ajustaveis -- um valor antigo
+        que tenha ficado no save e ignorado."""
         self.vol_musica = opcoes["musica"] / 10.0
-        self.vol_sfx = opcoes["sfx"] / 10.0
-        self.atraso = opcoes["atraso"] / 1000.0
-        for som in self.sons.values():
-            som.set_volume(VOLUME_SFX * self.vol_sfx * 100)
         if self.ligado:
             pygame.mixer.music.set_volume(VOLUME_MUSICA * self.vol_musica)
 
@@ -110,8 +132,6 @@ class Audio:
             return
         pygame.mixer.music.load(caminho)
         pygame.mixer.music.set_volume(VOLUME_MUSICA * self.vol_musica)
-        # com o som chegando atrasado (fone sem fio, TV), a faixa entra adiantada
-        # o mesmo tanto: o que se OUVE cai em cima do que se ve
         pygame.mixer.music.play(start=max(0.0, TRILHAS[cancao].inicio + self.atraso))
         self.tocando = True
 

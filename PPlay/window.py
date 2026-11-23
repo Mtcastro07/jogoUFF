@@ -33,7 +33,8 @@ class Window:
             cls._instance = super(Window, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, largura_virtual=800, altura_virtual=600, titulo="Power PPlay 2.0", resizavel=True, pixel_art=True, tela_cheia=False):
+    def __init__(self, largura_virtual=800, altura_virtual=600, titulo="Power PPlay 2.0", resizavel=True, pixel_art=True, tela_cheia=False,
+                 vsync=True):
         if hasattr(self, '_already_init'):
             return
         
@@ -63,9 +64,12 @@ class Window:
         if tela_cheia:
             flags |= pygame.FULLSCREEN
             
-        # Cria a janela real do Windows
+        # Cria a janela real. Com vsync o quadro so troca quando o monitor
+        # termina de desenhar o anterior: sem rasgo e sem ritmo irregular. Se o
+        # driver nao aceitar, abre sem (e o jogo limita o ritmo pelo relogio).
         self._flags = flags
-        self.real_screen = pygame.display.set_mode([self.largura, self.altura], flags)
+        self.vsync = False
+        self.real_screen = self._abrir(vsync)
         
         # Cria o Buffer Virtual (Canvas)
         self.screen = pygame.Surface((self.largura, self.altura))
@@ -80,6 +84,24 @@ class Window:
         self.mouse = Mouse()
         
         self._already_init = True
+
+    def _abrir(self, vsync):
+        if vsync:
+            try:
+                tela = pygame.display.set_mode([self.largura, self.altura], self._flags, vsync=1)
+                self.vsync = True
+                return tela
+            except pygame.error:
+                pass
+        self.vsync = False
+        return pygame.display.set_mode([self.largura, self.altura], self._flags)
+
+    def taxa_do_monitor(self):
+        """Quadros por segundo do monitor (0 se o sistema nao informar)."""
+        try:
+            return pygame.display.get_current_refresh_rate()
+        except (AttributeError, pygame.error):
+            return 0
 
     @classmethod
     def get_instance(cls):
@@ -150,7 +172,7 @@ class Window:
             pygame.display.toggle_fullscreen()
         except pygame.error:
             # alguns drivers nao alternam no lugar: recria a janela com a flag trocada
-            pygame.display.set_mode([self.largura, self.altura], self._flags)
+            self._abrir(self.vsync)
         self.real_screen = pygame.display.get_surface()
 
     def delta_time(self):

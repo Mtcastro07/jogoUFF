@@ -98,14 +98,31 @@ def drone(dur):
     return estereo(s * np.minimum(1, k / 0.1) * np.minimum(1, (1 - k) / 0.15) * 0.4)
 
 
+def estatica(dur):
+    """O chiado de TV fora do ar: ruido branco, um pouco aspero, que entra e sai rapido."""
+    n = int(dur * SR); k = np.arange(n) / n
+    r = rng.standard_normal(n).astype(np.float32)
+    env = np.minimum(1, k / 0.05) * np.minimum(1, (1 - k) / 0.15)
+    return estereo((r - caixa(r, 2)) * env * 0.6)
+
+
+def abafar(a, vezes=3, n=14):
+    """Passa-baixa simples (media movel repetida): o som que sai do alto-falante da TV."""
+    for _ in range(vezes):
+        a = np.stack([caixa(a[:, 0], n), caixa(a[:, 1], n)], 1)
+    return a.astype(np.float32)
+
+
 SINT = {"drone": lambda e: drone(e["dur"]), "riser": lambda e: riser(e["dur"]), "boom": lambda e: boom(),
         "whoosh": lambda e: whoosh(e["dur"]), "glitch": lambda e: glitch(e["dur"]), "tick": lambda e: tick(),
-        "coracao": lambda e: coracao()}
-NIVEL = {"drone": 0.5, "riser": 0.5, "boom": 0.75, "whoosh": 0.35, "glitch": 0.3, "tick": 0.35, "coracao": 0.9}
+        "coracao": lambda e: coracao(), "estatica": lambda e: estatica(e["dur"])}
+NIVEL = {"drone": 0.5, "riser": 0.5, "boom": 0.75, "whoosh": 0.35, "glitch": 0.3, "tick": 0.35, "coracao": 0.9, "estatica": 0.3}
 
 for c in tl["musica"]:
     ts = c.get("tapestop", 0.0)
     a = decode(c["arquivo"], c["origem"], c["dur"] + ts)
+    if c.get("abafado"):
+        a = abafar(a)
     corpo = a[: int(c["dur"] * SR)]
     k = len(corpo)
     env = np.ones(k, np.float32)
