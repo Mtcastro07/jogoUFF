@@ -1,79 +1,62 @@
-"""
-Transicao entre telas: a tela escurece, troca e clareia de novo.
-
-    COBRINDO   a tela velha escurece ate o preto (e fica parada)
-    (troca)    `acao()` roda com a tela toda preta -- carregar uma fase
-               pesada aqui nao aparece como engasgo
-    REVELANDO  a tela nova clareia a partir do preto
-"""
-
 import pygame
 
-from .config import LARGURA, ALTURA, FUNDO
+from .config import LARG_TELA, ALT_TELA, FUNDO
+from .tempo import Curvas
+from .ui import suaviza
 
-COBRIR, REVELAR = 0.28, 0.35    # segundos de cada metade
+COBRIR, REVELAR = 0.28, 0.35
 
 PARADA, COBRINDO, REVELANDO = 0, 1, 2
 
 
-def _suave(x):
-    x = max(0.0, min(1.0, x))
-    return x * x * (3.0 - 2.0 * x)
-
-
-class Transicao:
+class Cortina:
     def __init__(self):
         self.estado = PARADA
         self.t = 0.0
-        self.acao = None
-        self.veu = pygame.Surface((LARGURA, ALTURA))
+        self.animacoes = Curvas.nova()
+        self.o_que_faz = None
+        self.veu = pygame.Surface((LARG_TELA, ALT_TELA))
         self.veu.fill(FUNDO)
 
     @property
-    def ativa(self):
-        return self.estado != PARADA
-
-    @property
-    def cobrindo(self):
+    def ta_cobrindo(self):
         return self.estado == COBRINDO
 
-    def iniciar(self, acao, cor=None):
-        """
-        Escurece, roda `acao()` e clareia. False se a tela ja esta escurecendo
-        (um segundo clique). Se ela ainda esta CLAREANDO, volta a escurecer de
-        onde esta: senao um ENTER logo depois de uma troca de tela (a PROXIMA
-        FASE no resultado, por exemplo) tocava o clique e nao fazia nada.
-        """
+    def liga(self, o_que_faz):
         if self.estado == COBRINDO:
-            return False
-        # a curva e simetrica: escurecer a partir de 1 - t continua do mesmo veu
-        t = 1.0 - self.t if self.estado == REVELANDO else 0.0
-        self.estado, self.t, self.acao = COBRINDO, t, acao
-        return True
+            return
+        t = 0.0
+        if self.estado == REVELANDO:
+            t = 1.0 - self.t
+        self.o_que_faz = o_que_faz
+        self.muda(COBRINDO, COBRIR, t)
 
-    def revelar(self, cor=None):
-        """Comeca no preto e so clareia (a abertura do jogo)."""
-        self.estado, self.t, self.acao = REVELANDO, 0.0, None
+    def muda(self, estado, duracao, t=0.0):
+        self.estado, self.t = estado, 0.0
+        self.animacoes.limpar()
+        self.animacoes.to(self, "t", 1.0, duracao, progresso=t)
+        self.t = t
 
-    def atualizar(self, dt):
+    def revela(self):
+        self.muda(REVELANDO, REVELAR)
+
+    def atualiza(self, dt):
         if self.estado == COBRINDO:
-            self.t += dt / COBRIR
+            self.animacoes.update(dt)
             if self.t >= 1.0:
-                acao, self.acao = self.acao, None
-                if acao is not None:
-                    acao()
-                # o quadro da troca pode ter demorado (carregar a fase): o
-                # clarear comeca do zero no proximo quadro, sem pular
-                self.estado, self.t = REVELANDO, 0.0
+                self.o_que_faz()
+                self.muda(REVELANDO, REVELAR)
         elif self.estado == REVELANDO:
-            self.t += min(dt, 1.0 / 30.0) / REVELAR
+            self.animacoes.update(min(dt, 1.0 / 30.0))
             if self.t >= 1.0:
                 self.estado = PARADA
 
-    def desenhar(self, tela):
+    def mostra_na_tela(self, tela):
         if self.estado == PARADA:
             return
-        k = _suave(self.t) if self.estado == COBRINDO else 1.0 - _suave(self.t)
+        k = suaviza(self.t)
+        if self.estado == REVELANDO:
+            k = 1.0 - k
         if k >= 1.0:
             tela.fill(FUNDO)
         elif k > 0.0:

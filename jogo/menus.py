@@ -1,550 +1,480 @@
-"""
-As telas fora da partida: menu principal, selecao de fase, resultado e fim
-de jogo. Todas desenham o cenario da fase escolhida rolando devagar ao fundo.
-Sem animacoes de menu (o GDD): a troca de uma tela para outra e que e suave
-(jogo/transicao.py).
-"""
-
 import math
 
 import pygame
+from PPlay.input_manager import InputManager
+from PPlay.uikit import Button
 
-from . import arte, efeitos, fases, ui
+from . import efeitos, fases, ui
 from .audio import audio
-from .cenario import Cenario, ceu
-from .config import (LARGURA, ALTURA, BRANCO, CINZA, AMARELO, VERDE, VERMELHO,
-                     AZUL, COR_DIFICULDADE, COR_NOTA, CONTORNO)
+from .camera import Camera
+from .cena import TelaQualquer
+from .cenario import FundoTodo, ceu
+from .config import (LARG_TELA, ALT_TELA, BRANCO, CINZA, AMARELO, VERDE, VERMELHO,
+                     AZUL, COR_DA_DIFICULDADE, COR_DA_NOTA, CONTORNO)
+from .kit import Botao, Pauzinhos, BarraQueEnche, LinhaDeOpcao, Menu
+from .leo import Bonequinho
+from .tempo import Agenda, Curvas
 
 
-def preaquecer():
-    """
-    Na abertura do jogo, antes da primeira imagem: monta todas as fases e
-    pinta uma vez o fundo de cada mundo (as faixas de serra, dunas e nuvens
-    ficam guardadas). Sem isso, o primeiro quadro do menu e a primeira troca
-    de carta na selecao montavam tudo na hora -- e o quadro engasgava.
-    """
-    rascunho = pygame.Surface((LARGURA, ALTURA)).convert()
+def deixa_pronto():
+    rascunho = pygame.Surface((LARG_TELA, ALT_TELA)).convert()
     for f in fases.todas():
-        Cenario(f.tema).desenhar(rascunho, 0.0, 0.0, 0.0, 0.0)
-        efeitos.Ar(f.tema).desenhar(rascunho, 0.0, 0.0, 0.0)
-        ceu(f.tema)
+        FundoTodo(f.cores_da_fase).mostra_na_tela(rascunho, Camera(), 0.0, 0.0)
+        efeitos.Ar(f.cores_da_fase).draw(rascunho, Camera(), 0.0)
+        ceu(f.cores_da_fase)
 
 
-class Tela:
-    """Base: cenario rolando ao fundo e, opcionalmente, um menu de botoes."""
-
-    def __init__(self, app, fase=None, botoes=()):
-        self.app = app
-        self.fase = fase or fases.carregar(app.fase_selecionada)
-        self.cenario = Cenario(self.fase.tema)
-        self.ar = efeitos.Ar(self.fase.tema)
-        self.menu = ui.Menu(list(botoes)) if botoes else None
+class TelaBase(TelaQualquer):
+    def __init__(self, joguinho, fase=None, botoes=()):
+        super().__init__(joguinho)
+        self.fase = fase or fases.carrega_fase(joguinho.fase_escolhida)
+        self.cenario = FundoTodo(self.fase.cores_da_fase)
+        self.ar = efeitos.Ar(self.fase.cores_da_fase)
+        self.menu = None
+        if botoes:
+            self.menu = Menu(botoes)
         self.tempo = 0.0
+        self.despertador, self.animacoes = Agenda.nova(), Curvas.nova()
 
-    def evento(self, ev):
+    def ve_teclas(self):
         if self.menu is None:
             return
-        escolha = None
-        if ev.type == pygame.KEYDOWN:
-            if ev.key in (pygame.K_DOWN, pygame.K_s):
-                self.menu.mover(1)
-                audio.tocar("navegar")
-            elif ev.key in (pygame.K_UP, pygame.K_w):
-                self.menu.mover(-1)
-                audio.tocar("navegar")
-            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                escolha = self.menu.atual
-            elif ev.key == pygame.K_ESCAPE:
-                escolha = "ESC"
-        elif ev.type == pygame.MOUSEMOTION:
-            self.menu.passar_mouse(self.app.mouse())
-        elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-            escolha = self.menu.clique(self.app.mouse())
+        escolha = self.menu.ve_teclas(self.mouse, audio.toca)
         if escolha:
-            audio.tocar("clique")
-            self.escolher(escolha)
+            audio.toca("clique")
+            self.escolheu(escolha)
 
-    def escolher(self, rotulo):
+    def escolheu(self, rotulo):
         pass
 
-    def atualizar(self, dt):
+    def atualiza(self, dt):
         self.tempo += dt
+        self.animacoes.vai_ate(self.tempo)
+        self.despertador.vai_ate(self.tempo)
 
-    def _fundo(self, tela, cenario, ar):
+    def fundo(self, tela):
         pulso = max(0.0, 1.0 - (self.tempo * 2.0 % 1.0) * 3.0)
-        cenario.desenhar(tela, self.tempo * 40.0, 0.0, self.tempo, pulso)
-        ar.desenhar(tela, self.tempo * 40.0, 0.0, self.tempo)
+        cam = Camera(self.tempo * 40.0)
+        self.cenario.mostra_na_tela(tela, cam, self.tempo, pulso)
+        self.ar.draw(tela, cam, self.tempo)
 
-    def desenhar(self, tela):
-        self._fundo(tela, self.cenario, self.ar)
-        ui.escurecer_tela(tela, 130)
+    def mostra_na_tela(self, tela):
+        self.fundo(tela)
+        ui.escurece_tela(tela, 130)
         if self.menu is not None:
-            self.menu.desenhar(tela)
+            self.menu.mostra_na_tela(tela)
 
     def titulo(self, tela, s, tam, y, cor):
-        """Um titulo centrado na altura `y`, com o contorno do HUD: o astro do fundo
-        passa por tras dos titulos, e sem contorno uma letra sumia em cima dele."""
-        ui.desenhar_texto(tela, s, tam, LARGURA // 2, y, cor, contorno=CONTORNO)
+        ui.escreve(tela, s, tam, LARG_TELA // 2, y, cor, borda_cor=CONTORNO)
 
 
-# ------------------------------------------------------------------- menu
-class TelaMenu(Tela):
-    def __init__(self, app):
-        x = LARGURA // 2 - 200
-        super().__init__(app, botoes=[ui.Botao("JOGAR", x, 418, 400, 52, VERDE),
-                                      ui.Botao("OPCOES", x, 480, 400, 52, AZUL),
-                                      ui.Botao("SAIR", x, 542, 400, 52, VERMELHO)])
+class TelaInicial(TelaBase):
+    def __init__(self, joguinho):
+        x = LARG_TELA // 2 - 200
+        super().__init__(joguinho, botoes=[Botao("JOGAR", x, 418, 400, 52, VERDE),
+                                           Botao("OPCOES", x, 480, 400, 52, AZUL),
+                                           Botao("SAIR", x, 542, 400, 52, VERMELHO)])
+        self.mundos_vencidos = Pauzinhos(len(fases.todas()), 16, 16, 44, borda=3, cor=AMARELO, brilho=4)
+        self.mundos_vencidos.set_position(LARG_TELA // 2 - (self.mundos_vencidos.valor_max - 1) * 22 - 8, 609)
 
-    def escolher(self, rotulo):
+    def escolheu(self, rotulo):
         if rotulo == "JOGAR":
-            self.app.ir_para_fases()
+            self.joguinho.vai_pras_fases()
         elif rotulo == "OPCOES":
-            self.app.ir_para_opcoes()
+            self.joguinho.vai_pras_opcoes()
         else:
-            self.app.sair()
+            self.joguinho.sai_daqui()
 
-    def desenhar(self, tela):
-        super().desenhar(tela)
+    def mostra_na_tela(self, tela):
+        super().mostra_na_tela(tela)
         y = 200 + math.sin(self.tempo * 2.0) * 4
-        logo = ui.imagem("logo.png", 3)
-        if logo is not None:
-            # flutua sem nunca encostar no alto da tela nem no lema
-            tela.blit(logo, logo.get_rect(center=(LARGURA // 2, int(y))))
-        else:
-            ui.desenhar_texto(tela, "RHYTHM STRIKER", 72, LARGURA // 2, y, self.fase.tema.destaque)
-        # embaixo dos botoes: o quanto do Rhythm Kingdom ja foi vencido
+        logo = ui.objeto("logo.png", 3)
+        logo.bota_no_meio(LARG_TELA // 2, int(y))
+        logo.draw(tela)
         total = len(fases.todas())
-        completas, pontos = self.app.save.progresso([f.cancao for f in fases.todas()])
-        # o lema, logo abaixo do logo: as palavras entram uma a cada batida do fundo
-        conta = {3: "TRES", 4: "QUATRO", 5: "CINCO", 6: "SEIS"}.get(total, str(total))
-        lema = ("UM BOTAO.", f"{conta} MUNDOS.", "NO RITMO.")
+        quantas_completas, pontos = self.joguinho.save.progresso([f.nome_da_musica for f in fases.todas()])
+        lema = ("UM BOTAO.", "CINCO MUNDOS.", "NO RITMO.")
         quantas = min(len(lema), int(self.tempo * 2.0))
         if quantas:
-            self.titulo(tela, "  ".join(lema[:quantas]), 20, 396, self.fase.tema.destaque)
+            self.titulo(tela, "  ".join(lema[:quantas]), 20, 396, self.fase.cores_da_fase.destaque)
         if pontos:
-            # o quanto do Rhythm Kingdom ja foi vencido: um marco por mundo
-            cx = LARGURA // 2 - (total - 1) * 22
-            for i in range(total):
-                feito = i < completas
-                pygame.draw.rect(tela, CONTORNO, (cx + i * 44 - 11, 606, 22, 22))
-                pygame.draw.rect(tela, AMARELO if feito else (70, 74, 104), (cx + i * 44 - 8, 609, 16, 16))
-                if feito:
-                    pygame.draw.rect(tela, BRANCO, (cx + i * 44 - 8, 609, 16, 4))
-            self.titulo(tela, f"{completas} DE {total} MUNDOS VENCIDOS  -  {pontos} PTS", 18, 646,
-                        AMARELO if completas == total else ui.APAGADO)
-        ui.dicas(tela, (("SETAS", "ESCOLHEM"), ("ENTER", "CONFIRMA"), ("F11", "TELA CHEIA")), ALTURA - 36)
+            self.mundos_vencidos.set_value(quantas_completas)
+            self.mundos_vencidos.draw(tela)
+            cor = ui.COR_APAGADA
+            if quantas_completas == total:
+                cor = AMARELO
+            self.titulo(tela, f"{quantas_completas} DE {total} MUNDOS VENCIDOS  -  {pontos} PTS", 18, 646, cor)
+        ui.dicas(tela, (("SETAS", "ESCOLHEM"), ("ENTER", "CONFIRMA"), ("F11", "TELA CHEIA")), ALT_TELA - 36)
 
 
-# ----------------------------------------------------------------- opcoes
-class TelaOpcoes(Tela):
-    """So o volume da musica: setas para os lados mudam, ESC (ou VOLTAR) sai."""
-    # (rotulo, chave em save.opcoes, minimo, maximo, passo)
-    LINHAS = (("VOLUME DA MUSICA", "musica", 0, 10, 1), ("VOLTAR", None, 0, 0, 0))
-
-    def __init__(self, app):
-        super().__init__(app)
+class TelaConfig(TelaBase):
+    def __init__(self, joguinho):
+        super().__init__(joguinho)
         self.indice = 0
-        self.opcoes = app.save.opcoes
+        self.opcoes = joguinho.save.opcoes
+        cor = self.fase.cores_da_fase.destaque
+        self.linhas = [LinhaDeOpcao("VOLUME DA MUSICA", 300, "musica", 10, cor),
+                       LinhaDeOpcao("VOLTAR", 390, None, 0, cor)]
 
-    def _y(self, i):
-        return 300 + i * 90
-
-    def _mudar(self, d):
-        rotulo, chave, minimo, maximo, passo = self.LINHAS[self.indice]
-        if chave is None:
+    def muda(self, d):
+        linha = self.linhas[self.indice]
+        if linha.chave is None:
             return
-        novo = max(minimo, min(maximo, self.opcoes[chave] + d * passo))
-        if novo != self.opcoes[chave]:
-            self.opcoes[chave] = novo
-            audio.aplicar(self.opcoes)
-            audio.tocar("navegar")
+        novo = linha.ta_mudado(self.opcoes[linha.chave], d)
+        if novo != self.opcoes[linha.chave]:
+            self.opcoes[linha.chave] = novo
+            audio.aplica(self.opcoes)
+            audio.toca("navegar")
 
-    def _sair(self):
-        self.app.save.salvar()
-        audio.tocar("clique")
-        self.app.ir_para_menu()
+    def vai_embora(self):
+        self.joguinho.save.salva()
+        audio.toca("clique")
+        self.joguinho.vai_pro_menu()
 
-    def evento(self, ev):
-        if ev.type == pygame.KEYDOWN:
-            if ev.key in (pygame.K_DOWN, pygame.K_s):
-                self.indice = (self.indice + 1) % len(self.LINHAS)
-                audio.tocar("navegar")
-            elif ev.key in (pygame.K_UP, pygame.K_w):
-                self.indice = (self.indice - 1) % len(self.LINHAS)
-                audio.tocar("navegar")
-            elif ev.key in (pygame.K_LEFT, pygame.K_a):
-                self._mudar(-1)
-            elif ev.key in (pygame.K_RIGHT, pygame.K_d):
-                self._mudar(1)
-            elif ev.key == pygame.K_ESCAPE or (
-                    ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)
-                    and self.LINHAS[self.indice][1] is None):
-                self._sair()
-        elif ev.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN):
-            mx, my = self.app.mouse()
-            for i in range(len(self.LINHAS)):
-                if abs(my - self._y(i)) < 32 and abs(mx - LARGURA // 2) < 380:
-                    self.indice = i
-                    if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-                        if self.LINHAS[i][1] is None:
-                            self._sair()
-                        else:               # metade esquerda diminui, direita aumenta
-                            self._mudar(1 if mx > LARGURA // 2 + 100 else -1)
+    def ve_teclas(self):
+        for linha in self.linhas:
+            linha.update()
+        ta_no_voltar = self.linhas[self.indice].chave is None
+        if InputManager.action_pressed("baixo"):
+            self.indice = (self.indice + 1) % len(self.linhas)
+            audio.toca("navegar")
+        elif InputManager.action_pressed("cima"):
+            self.indice = (self.indice - 1) % len(self.linhas)
+            audio.toca("navegar")
+        elif InputManager.action_pressed("esquerda"):
+            self.muda(-1)
+        elif InputManager.action_pressed("direita"):
+            self.muda(1)
+        elif InputManager.action_pressed("voltar"):
+            self.vai_embora()
+            return
+        elif ta_no_voltar and InputManager.action_pressed("confirmar"):
+            self.vai_embora()
+            return
+        for i, linha in enumerate(self.linhas):
+            if linha.pressed or (linha.hovered and self.mouse.mouse_mexeu()):
+                self.indice = i
+            if linha.pressed and linha.chave is None:
+                self.vai_embora()
+            elif linha.pressed:
+                if self.mouse.get_position()[0] > LARG_TELA // 2 + 100:
+                    self.muda(1)
+                else:
+                    self.muda(-1)
 
-    def desenhar(self, tela):
-        super().desenhar(tela)
-        destaque = self.fase.tema.destaque
-        self.titulo(tela, "OPCOES", 56, 160, destaque)
-        x, w = LARGURA // 2 - 380, 760
-        for i, (rotulo, chave, minimo, maximo, passo) in enumerate(self.LINHAS):
-            y = self._y(i)
-            foco = i == self.indice
-            if not ui.moldura(tela, "foco" if foco else "padrao", x, y - 30, w, 60):
-                ui.painel(tela, x, y - 30, w, 60, borda=destaque if foco else CINZA)
-            cor = BRANCO if foco else ui.APAGADO
-            if chave is None:
-                ui.desenhar_texto(tela, rotulo, 26, LARGURA // 2, y, cor)
-                continue
-            ui.desenhar_texto(tela, rotulo, 22, x + 36, y, cor, "esquerda")
-            valor = self.opcoes[chave]
-            bx, bw = x + 400, 230
-            for k in range(10):          # dez degraus de volume
-                cheio = k < valor
-                pygame.draw.rect(tela, CONTORNO, (bx + k * 23 - 1, y - 13, 20, 26))
-                pygame.draw.rect(tela, (destaque if foco else ui.APAGADO) if cheio
-                                 else (70, 74, 104), (bx + k * 23 + 1, y - 11, 16, 22))
-            if foco:
-                vai = int(3 * math.sin(self.tempo * 8.0))
-                ui.desenhar_texto(tela, "<", 26, bx - 30 - vai, y, destaque)
-                ui.desenhar_texto(tela, ">", 26, bx + bw + 30 + vai, y, destaque)
-        ui.dicas(tela, (("SETAS", "ESCOLHEM E MUDAM"), ("ESC", "VOLTA")), ALTURA - 36)
+    def mostra_na_tela(self, tela):
+        super().mostra_na_tela(tela)
+        self.titulo(tela, "OPCOES", 56, 160, self.fase.cores_da_fase.destaque)
+        for i, linha in enumerate(self.linhas):
+            linha.draw(tela, i == self.indice, self.opcoes.get(linha.chave, 0), self.tempo)
+        ui.dicas(tela, (("SETAS", "ESCOLHEM E MUDAM"), ("ESC", "VOLTA")), ALT_TELA - 36)
 
 
-# -------------------------------------------------------- selecao de fase
-class TelaFases(Tela):
-    LARG, ALT, VAO = 360, 420, 40
+class TelaEscolheFase(TelaBase):
+    ALT, VAO = 420, 18
+    TEMPO_DE_TROCA = 0.35
 
-    TROCA_FUNDO = 0.35        # segundos do cenario de uma fase se desfazendo no da outra
-
-    def __init__(self, app):
-        super().__init__(app)
+    def __init__(self, joguinho):
+        super().__init__(joguinho)
         self.lista = fases.todas()
-        self.indice = app.fase_selecionada
-        self.foco = [1.0 if i == self.indice else 0.0 for i in range(len(self.lista))]
-        self.saindo = None        # (foto do fundo de antes da troca, instante da troca)
-        # a carta embaixo do mouse. So ENTRAR numa carta a escolhe: o mouse
-        # tremendo dentro dela nao desfaz o que as setas escolheram, e a carta
-        # onde ele ja estava quando a tela abriu (o JOGAR do menu fica em cima
-        # da do meio) nao se escolhe sozinha
-        self.sob_mouse = self._carta_em(app.mouse())
+        leo = Bonequinho()
+        self.indice = joguinho.fase_escolhida
+        self.cartas = []
+        for i, f in enumerate(self.lista):
+            self.cartas.append(CartaDoMundo(f, self.retangulo_da_carta(i), leo, joguinho.save))
+        self.acende_botao()
+        self.cartas[self.indice].foco = 1.0
+        self.fotos = [pygame.Surface((LARG_TELA, ALT_TELA)).convert() for _ in range(2)]
+        self.foto_saindo = None
+        self.troca = 1.0
+        self.embaixo_do_mouse = self.carta_no_mouse()
 
-    def _rect(self, i):
-        # ate tres cartas, o tamanho de sempre; com mais mundos elas estreitam
-        # para caberem todas na tela (o que vai dentro se ajusta a largura)
+    def retangulo_da_carta(self, i):
         n = len(self.lista)
-        vao = self.VAO if n <= 3 else 18
-        larg = min(self.LARG, (LARGURA - 64 - (n - 1) * vao) // n)
-        x0 = (LARGURA - n * larg - (n - 1) * vao) // 2
-        return pygame.Rect(x0 + i * (larg + vao), 190, larg, self.ALT)
+        larg = (LARG_TELA - 64 - (n - 1) * self.VAO) // n
+        x0 = (LARG_TELA - n * larg - (n - 1) * self.VAO) // 2
+        return pygame.Rect(x0 + i * (larg + self.VAO), 190, larg, self.ALT)
 
-    def _carta_em(self, pos):
-        """O indice da carta embaixo de `pos`, ou None (a escolhida conta do tamanho em que aparece)."""
-        if self._rect(self.indice).inflate(20, 20).move(0, -14).collidepoint(pos):
-            return self.indice
-        for i in range(len(self.lista)):
-            if self._rect(i).collidepoint(pos):
+    def carta_no_mouse(self):
+        for carta in self.cartas:
+            carta.update()
+        for i, carta in enumerate(self.cartas):
+            if carta.hovered:
                 return i
         return None
 
-    def _selecionar(self, i):
-        self.indice = self.app.fase_selecionada = i
-        # o fundo como esta na tela -- ate no meio de outra troca -- vira uma
-        # foto que se desfaz por cima do mundo novo: passando o mouse pelas
-        # cartas, uma troca atras da outra, nenhum mundo some de repente
-        a, b = _camadas_opacas()
-        foto = b if self.saindo is not None and self.saindo[0] is a else a
-        self._fundo(foto, self.cenario, self.ar)
-        self._desfazer(foto)
-        self.saindo = (foto, self.tempo)
-        self.cenario = Cenario(self.lista[i].tema)
-        self.ar = efeitos.Ar(self.lista[i].tema)
-        audio.tocar("navegar")
+    def acende_botao(self):
+        for i, carta in enumerate(self.cartas):
+            carta.ta_no_foco(i == self.indice)
 
-    def _desfazer(self, tela):
-        """Por cima do fundo, a foto do de antes da troca, cada vez mais apagada."""
-        if self.saindo is None:
-            return
-        foto, t0 = self.saindo
-        k = (self.tempo - t0) / self.TROCA_FUNDO
-        if k >= 1.0:
-            self.saindo = None
-            return
-        foto.set_alpha(int(255 * (1.0 - ui.suave(k))))
-        tela.blit(foto, (0, 0))
+    def seleciona(self, i):
+        self.indice = self.joguinho.fase_escolhida = i
+        self.acende_botao()
+        foto = self.fotos[0]
+        if self.foto_saindo is foto:
+            foto = self.fotos[1]
+        self.fundo(foto)
+        self.desmancha(foto)
+        self.foto_saindo, self.troca = foto, 0.0
+        self.animacoes.limpar()
+        self.animacoes.to(self, "troca", 1.0, self.TEMPO_DE_TROCA, inicio=self.tempo)
+        self.cenario = FundoTodo(self.lista[i].cores_da_fase)
+        self.ar = efeitos.Ar(self.lista[i].cores_da_fase)
+        audio.toca("navegar")
 
-    def evento(self, ev):
-        app = self.app
-        if ev.type == pygame.KEYDOWN:
-            if ev.key in (pygame.K_RIGHT, pygame.K_d):
-                self._selecionar((self.indice + 1) % len(self.lista))
-            elif ev.key in (pygame.K_LEFT, pygame.K_a):
-                self._selecionar((self.indice - 1) % len(self.lista))
-            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                audio.tocar("clique")
-                app.ir_para_jogo(self.indice)
-            elif ev.key == pygame.K_ESCAPE:
-                audio.tocar("clique")
-                app.ir_para_menu()
-        elif ev.type == pygame.MOUSEMOTION:
-            # passar o mouse por cima de uma carta a escolhe, com a mesma troca das setas
-            i = self._carta_em(app.mouse())
-            if i != self.sob_mouse:
-                self.sob_mouse = i
+    def desmancha(self, tela):
+        if self.foto_saindo is None:
+            return
+        if self.troca >= 1.0:
+            self.foto_saindo = None
+            return
+        self.foto_saindo.set_alpha(int(255 * (1.0 - ui.suaviza(self.troca))))
+        tela.blit(self.foto_saindo, (0, 0))
+
+    def ve_teclas(self):
+        joguinho = self.joguinho
+        if InputManager.action_pressed("direita"):
+            self.seleciona((self.indice + 1) % len(self.lista))
+        elif InputManager.action_pressed("esquerda"):
+            self.seleciona((self.indice - 1) % len(self.lista))
+        if InputManager.action_pressed("confirmar"):
+            audio.toca("clique")
+            joguinho.vai_pro_jogo(self.indice)
+            return
+        if InputManager.action_pressed("voltar"):
+            audio.toca("clique")
+            joguinho.vai_pro_menu()
+            return
+        if self.mouse.mouse_mexeu():
+            i = self.carta_no_mouse()
+            if i != self.embaixo_do_mouse:
+                self.embaixo_do_mouse = i
                 if i is not None and i != self.indice:
-                    self._selecionar(i)
-        elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-            i = self._carta_em(app.mouse())
-            if i == self.indice:
-                audio.tocar("clique")
-                app.ir_para_jogo(i)
-            elif i is not None:
-                self._selecionar(i)
+                    self.seleciona(i)
+        for i, carta in enumerate(self.cartas):
+            if carta.is_clicked() and i == self.indice:
+                audio.toca("clique")
+                joguinho.vai_pro_jogo(i)
+                return
+            if carta.is_clicked():
+                self.seleciona(i)
+                return
 
-    def desenhar(self, tela):
-        self._fundo(tela, self.cenario, self.ar)
-        self._desfazer(tela)
-        ui.escurecer_tela(tela, 130)
+    def mostra_na_tela(self, tela):
+        self.fundo(tela)
+        self.desmancha(tela)
+        ui.escurece_tela(tela, 130)
         self.titulo(tela, "ESCOLHA A FASE", 48, 100, BRANCO)
-        ui.dicas(tela, (("SETAS", "ESCOLHEM"), ("ENTER", "JOGA"), ("ESC", "VOLTA")), ALTURA - 36)
-        for i, f in enumerate(self.lista):
-            sel = i == self.indice
-            self.foco[i] += ((1.0 if sel else 0.0) - self.foco[i]) * 0.25
-            self._carta(tela, self._rect(i), f, sel, self.foco[i])
+        ui.dicas(tela, (("SETAS", "ESCOLHEM"), ("ENTER", "JOGA"), ("ESC", "VOLTA")), ALT_TELA - 36)
+        for carta in self.cartas:
+            carta.draw(tela, self.tempo)
 
-    def _carta(self, tela, r, f, sel, foco):
-        cor = COR_DIFICULDADE[f.dificuldade]
-        # a escolhida cresce aos poucos (e a que perdeu o foco encolhe)
-        r = r.inflate(int(20 * foco), int(20 * foco)).move(0, -int(14 * foco))
+
+class CartaDoMundo(Button):
+    def __init__(self, fase, lugar, leo, save):
+        super().__init__(lugar.w, lugar.h, fase.nome, cor_base=COR_DA_DIFICULDADE[fase.dificil_quanto],
+                         cor_hover=fase.cores_da_fase.destaque)
+        self.cor_texto = BRANCO
+        self.fase, self.lugar, self.leo, self.save = fase, lugar, leo, save
+        self.foco = 0.0
+        self.ta_no_foco(False)
+        niveis = list(COR_DA_DIFICULDADE)
+        self.n_degraus = Pauzinhos(len(niveis), 10, 12, 14, cor=self.cor_base)
+        self.n_degraus.set_value(niveis.index(fase.dificil_quanto) + 1)
+        self.melhor = BarraQueEnche(0, 6, self.cor_hover)
+
+    def ta_no_foco(self, sim):
+        self.ta_escolhida = sim
+        r = self.lugar.inflate(20, 20).move(0, -14) if sim else self.lugar
+        self.set_position(r.x, r.y)
+        self.width, self.height = r.size
+
+    def draw(self, tela, tempo):
+        alvo = 1.0 if self.ta_escolhida else 0.0
+        self.foco += (alvo - self.foco) * 0.25
+        foco = self.foco
+        r = self.lugar.inflate(int(20 * foco), int(20 * foco)).move(0, -int(14 * foco))
         if foco > 0.05:
-            # a escolhida levanta e ganha um clarao na cor do mundo, que respira
-            brilho = pygame.Surface((r.w + 36, r.h + 36), pygame.SRCALPHA)
-            forca = (0.75 + 0.25 * math.sin(self.tempo * 4.0)) * foco
-            for i, alfa in enumerate((26, 44, 70)):
-                pygame.draw.rect(brilho, (*f.tema.destaque, int(alfa * forca)),
-                                 (i * 6, i * 6, r.w + 36 - i * 12, r.h + 36 - i * 12), border_radius=10)
-            tela.blit(brilho, (r.x - 18, r.y - 18))
-        # cada carta na moldura do seu mundo; a escolhida cresce e fica opaca
-        if not ui.moldura(tela, f.cancao, r.x, r.y, r.w, r.h, 255 if sel else 200):
-            ui.painel(tela, r.x, r.y, r.w, r.h, borda=cor if sel else CINZA, alpha=235 if sel else 200)
-        # uma amostra do mundo: o ceu do tema com o chao e um caco
-        amostra = pygame.Rect(r.x + 20, r.y + 20, r.w - 40, 120)
-        tela.blit(pygame.transform.scale(ceu(f.tema), amostra.size), amostra.topleft)
-        pygame.draw.rect(tela, f.tema.chao, (amostra.x, amostra.bottom - 30, amostra.w, 30))
-        pygame.draw.rect(tela, f.tema.chao_topo, (amostra.x, amostra.bottom - 30, amostra.w, 5))
-        emblema = arte.png("ui", f"emblema_{f.cancao}.png")
-        if emblema is not None:
-            tela.blit(emblema, emblema.get_rect(center=(amostra.centerx + amostra.w * 3 // 16,
-                                                        amostra.centery)))
-        else:
-            tela.blit(arte.caco(1, f.tema.perigo), (amostra.centerx + 50, amostra.bottom - 78))
-        arte.desenhar_heroi(tela, "parado", self.tempo * 8, amostra.x + amostra.w * 7 // 32,
-                            amostra.bottom - 30)
-        pygame.draw.rect(tela, cor, amostra, 2)
-
-        cx = r.centerx
-        ui.desenhar_texto_ajustado(tela, f.nome, 22, cx, r.y + 172, r.w - 36, BRANCO)
-        # a dificuldade em marcos (um por degrau da escala) e o andamento: o que
-        # o jogador vai sentir
-        # o que cabe na carta: ela estreita quando ha muitos mundos, e ai a
-        # dificuldade e o placar quebram em duas linhas em vez de a letra sumir
-        util = r.w - 44
-        niveis = len(COR_DIFICULDADE)
-        nivel = list(COR_DIFICULDADE).index(f.dificuldade) + 1
-        marcos = niveis * 14 + 8
-
-        def marcadores(x0, y):
-            for i in range(niveis):
-                pygame.draw.rect(tela, CONTORNO, (x0 + i * 14 - 1, y - 7, 12, 14))
-                pygame.draw.rect(tela, cor if i < nivel else (70, 74, 104), (x0 + i * 14, y - 6, 10, 12))
-
-        bpm = f"{f.bpm:.0f} BPM"
-        junto = ui.texto(f"{f.dificuldade}  {bpm}", 16, cor)
-        if junto.get_width() + marcos <= util:
-            x0 = cx - (junto.get_width() + marcos) // 2
-            marcadores(x0, r.y + 204)
-            tela.blit(junto, (x0 + marcos, r.y + 204 - junto.get_height() // 2))
-            y = r.y + 264                     # o centro da medalha
-        else:
-            ui.desenhar_texto(tela, f.dificuldade, 16, cx, r.y + 198, cor)
-            rotulo = ui.texto(bpm, 16, cor)
-            x0 = cx - (rotulo.get_width() + marcos) // 2
-            marcadores(x0, r.y + 220)
-            tela.blit(rotulo, (x0 + marcos, r.y + 220 - rotulo.get_height() // 2))
-            y = r.y + 266
-        rec = self.app.save.recorde(f.cancao)
-        nota = rec["nota"]
-        medalha = ui.imagem(f"nota_{nota.lower()}.png") if nota != "-" else None
-        if medalha is not None:
-            tela.blit(medalha, medalha.get_rect(center=(cx, y)))
-        else:   # ainda sem nota: o "?" no quadradinho
-            if not ui.moldura(tela, "padrao", cx - 32, y - 32, 64, 64):
-                ui.painel(tela, cx - 32, y - 32, 64, 64, borda=COR_NOTA[nota])
-            ui.desenhar_texto(tela, "?" if nota == "-" else nota, 36, cx, y, COR_NOTA[nota])
-        placar = f"{rec['melhor']:.0f}%  -  {rec['pontos']} PTS"
-        ecos = f"ECOS {rec['ecos']}/{len(f.brilhos)}"
-        if ui.texto(f"{placar}  -  {ecos}", 16, ui.APAGADO).get_width() <= util:
-            ui.desenhar_texto(tela, f"{placar}  -  {ecos}", 16, cx, y + 50, ui.APAGADO)
-            y += 66
-        else:
-            ui.desenhar_texto_ajustado(tela, placar, 16, cx, y + 42, util, ui.APAGADO)
-            ui.desenhar_texto_ajustado(tela, ecos, 16, cx, y + 59, util, ui.APAGADO)
-            y += 74
-        # o melhor progresso tambem como barra: de longe ja se ve quanto falta
-        bw = r.w - 90
-        pygame.draw.rect(tela, CONTORNO, (cx - bw // 2 - 2, y - 5, bw + 4, 10))
-        pygame.draw.rect(tela, (70, 74, 104), (cx - bw // 2, y - 3, bw, 6))
-        pygame.draw.rect(tela, f.tema.destaque, (cx - bw // 2, y - 3, int(bw * rec["melhor"] / 100.0), 6))
-        ui.desenhar_texto_ajustado(tela, f.trilha.titulo, 18, cx, y + 22, util, AMARELO)
-        ui.desenhar_texto_ajustado(tela, f.trilha.artista, 16, cx, y + 44, util, ui.APAGADO)
-        if not sel:
-            # as outras recuam: um veu escuro por cima, para a escolhida mandar
+            self.brilho_em_volta(tela, r, tempo)
+        alfa = 200
+        if self.ta_escolhida:
+            alfa = 255
+        ui.desenha_moldura(tela, self.fase.nome_da_musica, r.x, r.y, r.w, r.h, alfa)
+        self.amostrinha(tela, pygame.Rect(r.x + 20, r.y + 20, r.w - 40, 120), tempo)
+        ui.escreve_cabendo(tela, self.texto, 22, r.centerx, r.y + 172, r.w - 36, self.cor_texto)
+        self.mostra_dados(tela, r)
+        if not self.ta_escolhida:
             veu = pygame.Surface(r.size, pygame.SRCALPHA)
             veu.fill((8, 6, 20, int(96 * (1.0 - foco))))
             tela.blit(veu, r.topleft)
 
+    def brilho_em_volta(self, tela, r, tempo):
+        brilho = pygame.Surface((r.w + 36, r.h + 36), pygame.SRCALPHA)
+        forca = (0.75 + 0.25 * math.sin(tempo * 4.0)) * self.foco
+        for i, alfa in enumerate((26, 44, 70)):
+            pygame.draw.rect(brilho, (*self.cor_hover, int(alfa * forca)),
+                             (i * 6, i * 6, r.w + 36 - i * 12, r.h + 36 - i * 12), border_radius=10)
+        tela.blit(brilho, (r.x - 18, r.y - 18))
 
-_opacas = []
+    def amostrinha(self, tela, amostra, tempo):
+        cores_da_fase = self.fase.cores_da_fase
+        tela.blit(pygame.transform.scale(ceu(cores_da_fase), amostra.size), amostra.topleft)
+        pygame.draw.rect(tela, cores_da_fase.chao, (amostra.x, amostra.bottom - 30, amostra.w, 30))
+        pygame.draw.rect(tela, cores_da_fase.chao_topo, (amostra.x, amostra.bottom - 30, amostra.w, 5))
+        emblema = ui.objeto(f"emblema_{self.fase.nome_da_musica}.png")
+        emblema.bota_no_meio(amostra.centerx + amostra.w * 3 // 16, amostra.centery)
+        emblema.draw(tela)
+        self.leo.pose("parado", tempo * 8)
+        self.leo.set_position(amostra.x + amostra.w * 7 // 32, amostra.bottom - 30)
+        self.leo.draw(tela)
+        pygame.draw.rect(tela, self.cor_base, amostra, 2)
+
+    def mostra_dados(self, tela, r):
+        f, cor, cx = self.fase, self.cor_base, r.centerx
+        ui.escreve(tela, f.dificil_quanto, 16, cx, r.y + 198, cor)
+        rotulo = ui.texto(f"{f.bpm_da_musica:.0f} BPM", 16, cor)
+        marcos = self.n_degraus.valor_max * self.n_degraus.passo + 8
+        x0 = cx - (rotulo.get_width() + marcos) // 2
+        self.n_degraus.set_position(x0, r.y + 214)
+        tela.blit(rotulo, (x0 + marcos, r.y + 220 - rotulo.get_height() // 2))
+        self.n_degraus.draw(tela)
+
+        y = r.y + 266
+        util = r.w - 44
+        rec = self.save.recorde(f.nome_da_musica)
+        if rec["nota"] == "-":
+            ui.desenha_moldura(tela, "padrao", cx - 32, y - 32, 64, 64)
+            ui.escreve(tela, "?", 36, cx, y, COR_DA_NOTA["-"])
+        else:
+            medalha = ui.objeto(f"nota_{rec['nota'].lower()}.png")
+            medalha.bota_no_meio(cx, y)
+            medalha.draw(tela)
+        placar = f"{rec['melhor']:.0f}%  -  {rec['pontos']} PTS"
+        ecos = f"ECOS {rec['ecos']}/{len(f.bolinhas)}"
+        ui.escreve_cabendo(tela, placar, 16, cx, y + 42, util, ui.COR_APAGADA)
+        ui.escreve_cabendo(tela, ecos, 16, cx, y + 59, util, ui.COR_APAGADA)
+        y += 74
+        self.melhor.width = r.w - 90
+        self.melhor.set_position(cx - self.melhor.width // 2, y - 3)
+        self.melhor.set_value(rec["melhor"])
+        self.melhor.draw(tela)
+        ui.escreve_cabendo(tela, f.info_da_musica.titulo, 18, cx, y + 22, util, AMARELO)
+        ui.escreve_cabendo(tela, f.info_da_musica.quem_canta, 16, cx, y + 44, util, ui.COR_APAGADA)
 
 
-def _camadas_opacas():
-    """Duas superficies do tamanho da tela (sem canal alfa), reaproveitadas."""
-    if not _opacas:
-        _opacas.extend(pygame.Surface((LARGURA, ALTURA)).convert() for _ in range(2))
-    return _opacas
-
-
-# -------------------------------------------------------------- resultado
-class TelaResultado(Tela):
-    def __init__(self, app, dados):
-        x = LARGURA // 2 - 200
-        super().__init__(app, dados["fase"], [
-            ui.Botao("JOGAR DE NOVO", x, 520, 400, 48, AZUL),
-            ui.Botao("PROXIMA FASE", x, 578, 400, 48, VERDE),
-            ui.Botao("MENU DE FASES", x, 636, 400, 48, AMARELO)])
-        self.dados = dados
-        if dados["completou"]:
-            self.menu.indice = 1
-        self.faiscas = efeitos.Faiscas()
-        self.carimbou = False      # a nota ja bateu no painel?
-
-    # a pontuacao conta por CONTA segundos; a nota cai logo depois, como um carimbo
+class TelaGanhou(TelaBase):
     CONTA, CARIMBO, QUEDA = 0.8, 0.95, 0.22
 
-    def atualizar(self, dt):
-        super().atualizar(dt)
-        self.faiscas.atualizar(dt)
-        if not self.carimbou and self.tempo >= self.CARIMBO + self.QUEDA:
-            self.carimbou = True
-            x, y = (LARGURA - 900) // 2 + 190, 136 + 140
-            nota = self.dados["nota"]
-            cor = COR_NOTA[nota]
-            self.faiscas.soltar(x, y, cor, 18)
-            self.faiscas.soltar(x, y, BRANCO, 10)
-            audio.tocar("perfeito" if nota in ("S", "A") else "bom")
+    def __init__(self, joguinho, dados):
+        x = LARG_TELA // 2 - 200
+        super().__init__(joguinho, dados["fase"], [
+            Botao("JOGAR DE NOVO", x, 520, 400, 48, AZUL),
+            Botao("PROXIMA FASE", x, 578, 400, 48, VERDE),
+            Botao("MENU DE FASES", x, 636, 400, 48, AMARELO)])
+        self.dados = dados
+        self.menu.indice = 1
+        self.faiscas = efeitos.UmMonteDeFaisca()
+        self.conta = self.queda = 0.0
+        self.animacoes.to(self, "conta", 1.0, self.CONTA)
+        self.animacoes.to(self, "queda", 1.0, self.QUEDA, inicio=self.CARIMBO)
+        self.despertador.after(self.CARIMBO + self.QUEDA, self.carimba)
 
-    def escolher(self, rotulo):
-        app, f = self.app, self.fase
+    def atualiza(self, dt):
+        self.faiscas.update(dt)
+        super().atualiza(dt)
+
+    def carimba(self):
+        x, y = (LARG_TELA - 900) // 2 + 190, 136 + 140
+        nota = self.dados["nota"]
+        self.faiscas.solta_aqui(x, y, COR_DA_NOTA[nota], 18)
+        self.faiscas.solta_aqui(x, y, BRANCO, 10)
+        audio.toca("perfeito" if nota in ("S", "A") else "bom")
+
+    def escolheu(self, rotulo):
+        joguinho, f = self.joguinho, self.fase
         if rotulo == "JOGAR DE NOVO":
-            app.ir_para_jogo(f.ident)
+            joguinho.vai_pro_jogo(f.qual_fase)
         elif rotulo == "PROXIMA FASE":
-            app.ir_para_jogo((f.ident + 1) % len(fases.todas()))
+            joguinho.vai_pro_jogo((f.qual_fase + 1) % len(fases.todas()))
         else:
-            app.ir_para_fases()
+            joguinho.vai_pras_fases()
 
-    def desenhar(self, tela):
-        super().desenhar(tela)
+    def mostra_na_tela(self, tela):
+        super().mostra_na_tela(tela)
         d = self.dados
-        cor = VERDE if d["completou"] else AMARELO
-        self.titulo(tela, "FASE COMPLETA" if d["completou"] else "RESULTADO", 52, 56, cor)
+        self.titulo(tela, "FASE COMPLETA", 52, 56, VERDE)
         self.titulo(tela, self.fase.nome, 22, 102, CINZA)
 
-        x, y, w, h = (LARGURA - 900) // 2, 136, 900, 360
-        if not ui.moldura(tela, self.fase.cancao, x, y, w, h):
-            ui.painel(tela, x, y, w, h, borda=cor)
-        # esquerda: a nota e a precisao que a produziu
+        x, y, w, h = (LARG_TELA - 900) // 2, 136, 900, 360
+        ui.desenha_moldura(tela, self.fase.nome_da_musica, x, y, w, h)
         nota = d["nota"]
-        medalha = ui.imagem(f"nota_{nota.lower()}.png", 2)
-        # a nota so aparece depois da contagem: cai de grande e bate no lugar
-        k = (self.tempo - self.CARIMBO) / self.QUEDA
-        if medalha is not None:
-            if 0.0 < k < 1.0:
-                # copia nova a cada quadro (a escala muda): o alfa vai direto nela
-                img = pygame.transform.scale_by(medalha, 1.0 + 1.4 * (1.0 - k) ** 2)
-                img.set_alpha(max(16, int(255 * min(1.0, k * 2)) // 16 * 16))
-                tela.blit(img, img.get_rect(center=(x + 190, y + 140)))
-            elif k >= 1.0:
-                tela.blit(medalha, medalha.get_rect(center=(x + 190, y + 140)))
+        medalha = ui.objeto(f"nota_{nota.lower()}.png", 2)
+        k = self.queda
+        if k < 1.0:
+            medalha.set_scale(1.0 + 1.4 * (1.0 - k) ** 2)
+            medalha.set_transparency(max(16, int(255 * min(1.0, k * 2)) // 16 * 16))
         else:
-            if not ui.moldura(tela, "padrao", x + 110, y + 60, 160, 160):
-                ui.painel(tela, x + 110, y + 60, 160, 160, borda=COR_NOTA[nota])
-            ui.desenhar_texto(tela, nota, 96, x + 190, y + 140, COR_NOTA[nota])
-        ui.desenhar_texto(tela, f"{d['precisao'] * 100:.1f}%", 36, x + 190, y + 262, BRANCO)
-        ui.desenhar_texto(tela, "DE PRECISAO", 16, x + 190, y + 300, CINZA)
-        # direita: pontuacao e contagens
-        mostra = int(d["pontos"] * min(1.0, self.tempo / 0.8))
-        ui.desenhar_texto(tela, "PONTUACAO", 18, x + 620, y + 50, CINZA)
-        ui.desenhar_texto(tela, str(mostra), 64, x + 620, y + 100, BRANCO)
+            medalha.set_scale(1.0)
+            medalha.set_transparency(255)
+        medalha.bota_no_meio(x + 190, y + 140)
+        if k > 0.0:
+            medalha.draw(tela)
+        ui.escreve(tela, f"{d['precisao'] * 100:.1f}%", 36, x + 190, y + 262, BRANCO)
+        ui.escreve(tela, "DE PRECISAO", 16, x + 190, y + 300, CINZA)
+        mostra = int(d["pontos"] * self.conta)
+        ui.escreve(tela, "PONTUACAO", 18, x + 620, y + 50, CINZA)
+        ui.escreve(tela, str(mostra), 64, x + 620, y + 100, BRANCO)
         if d["recorde"]:
-            ui.desenhar_texto(tela, "NOVO RECORDE!", 20, x + 620, y + 150, AMARELO)
+            ui.escreve(tela, "NOVO RECORDE!", 20, x + 620, y + 150, AMARELO)
         linhas = (("PERFEITO", d["perfeitos"], VERDE), ("BOM", d["bons"], AMARELO),
-                  ("ERROU", d["erros"], VERMELHO), ("MAIOR SEQUENCIA", d["combo"], BRANCO))
-        if d.get("ecos_total"):
-            linhas += (("ECOS", f"{d['ecos']}/{d['ecos_total']}", self.fase.tema.destaque),)
+                  ("ERROU", d["erros"], VERMELHO), ("MAIOR SEQUENCIA", d["combo"], BRANCO),
+                  ("ECOS", f"{d['ecos']}/{d['ecos_total']}", self.fase.cores_da_fase.destaque))
         for i, (rotulo, valor, c) in enumerate(linhas):
-            # as linhas entram uma depois da outra, subindo um pouco
-            k = ui.suave((self.tempo - 0.15 - i * 0.12) / 0.2)
+            k = ui.suaviza((self.tempo - 0.15 - i * 0.12) / 0.2)
             if k <= 0.0:
                 continue
-            yy = y + 192 + i * 29 + int(8 * (1.0 - k))     # cinco linhas, acima dos creditos
-            ui.desenhar_texto(tela, rotulo, 18, x + 440, yy, CINZA, "esquerda")
-            ui.desenhar_texto(tela, str(valor), 22, x + 820, yy, c, "direita")
-        ui.desenhar_texto_ajustado(tela, self.fase.trilha.creditos, 16, LARGURA // 2,
-                                   y + h - 22, w - 40, CINZA)
-        self.faiscas.desenhar(tela, 0, 0)
+            yy = y + 192 + i * 29 + int(8 * (1.0 - k))
+            ui.escreve(tela, rotulo, 18, x + 440, yy, CINZA, "esquerda")
+            ui.escreve(tela, str(valor), 22, x + 820, yy, c, "direita")
+        ui.escreve_cabendo(tela, self.fase.info_da_musica.creditos, 16, LARG_TELA // 2,
+                           y + h - 22, w - 40, CINZA)
+        self.faiscas.draw(tela)
 
 
-# -------------------------------------------------------------- game over
-class TelaGameOver(Tela):
-    def __init__(self, app, dados):
-        x = LARGURA // 2 - 200
-        super().__init__(app, dados["fase"], [
-            ui.Botao("TENTAR DE NOVO", x, 430, 400, 56, AZUL),
-            ui.Botao("MENU DE FASES", x, 500, 400, 56, AMARELO),
-            ui.Botao("MENU PRINCIPAL", x, 570, 400, 56, VERMELHO)])
+class TelaPerdeu(TelaBase):
+    def __init__(self, joguinho, dados):
+        x = LARG_TELA // 2 - 200
+        super().__init__(joguinho, dados["fase"], [
+            Botao("TENTAR DE NOVO", x, 430, 400, 56, AZUL),
+            Botao("MENU DE FASES", x, 500, 400, 56, AMARELO),
+            Botao("MENU PRINCIPAL", x, 570, 400, 56, VERMELHO)])
         self.dados = dados
 
-    def escolher(self, rotulo):
-        app = self.app
+    def escolheu(self, rotulo):
+        joguinho = self.joguinho
         if rotulo == "TENTAR DE NOVO":
-            app.ir_para_jogo(self.fase.ident)
+            joguinho.vai_pro_jogo(self.fase.qual_fase)
         elif rotulo == "MENU DE FASES":
-            app.ir_para_fases()
+            joguinho.vai_pras_fases()
         else:
-            app.ir_para_menu()
+            joguinho.vai_pro_menu()
 
-    def desenhar(self, tela):
-        super().desenhar(tela)
+    def mostra_na_tela(self, tela):
+        super().mostra_na_tela(tela)
         d = self.dados
-        tremor = math.sin(self.tempo * 30) * max(0.0, 1.0 - self.tempo * 2) * 8
-        ui.desenhar_texto(tela, "FIM DE JOGO", 80, LARGURA // 2 + tremor, 170, VERMELHO,
-                          contorno=CONTORNO)
-        x, y, w = (LARGURA - 800) // 2, 260, 800
-        if not ui.moldura(tela, self.fase.cancao, x, y, w, 120):
-            ui.painel(tela, x, y, w, 120, borda=VERMELHO)
+        tremidao = math.sin(self.tempo * 30) * max(0.0, 1.0 - self.tempo * 2) * 8
+        ui.escreve(tela, "FIM DE JOGO", 80, LARG_TELA // 2 + tremidao, 170, VERMELHO,
+                   borda_cor=CONTORNO)
+        x, y, w = (LARG_TELA - 800) // 2, 260, 800
+        ui.desenha_moldura(tela, self.fase.nome_da_musica, x, y, w, 120)
         campos = (("FASE", self.fase.nome), ("PROGRESSO", f"{d['progresso']:.0f}%"),
                   ("PONTUACAO", str(d["pontos"])),
-                  ("ECOS", f"{d.get('ecos', 0)}/{d.get('ecos_total', 0)}"))
+                  ("ECOS", f"{d['ecos']}/{d['ecos_total']}"))
         for i, (rotulo, valor) in enumerate(campos):
-            cx = x + w * (0.19 + i * 0.22) + (30 if i else 0)
-            ui.desenhar_texto(tela, rotulo, 16, cx, y + 40, CINZA)
-            ui.desenhar_texto_ajustado(tela, valor, 22, cx, y + 80, 250 if i == 0 else 160, BRANCO)
+            cx = x + w * (0.19 + i * 0.22)
+            util = 250
+            if i > 0:
+                cx += 30
+                util = 160
+            ui.escreve(tela, rotulo, 16, cx, y + 40, CINZA)
+            ui.escreve_cabendo(tela, valor, 22, cx, y + 80, util, BRANCO)

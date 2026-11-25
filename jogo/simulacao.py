@@ -1,349 +1,300 @@
-"""
-Fisica do jogador, em passos fixos de 1/240 s. Nada aqui desenha nada.
-
-Leo tem UMA acao, no unico botao:
-
-    PULO         o tempo apertado decide a ALTURA: um toque rapido e um pulo
-                 baixo, segurar ate o alto do arco e o pulo inteiro. Os dois
-                 pousam no mesmo lugar e na mesma batida -- o ritmo nunca se
-                 perde. Segurado alem do pouso, ele pula de novo a cada pouso.
-                 (No bosque, a fase so de toques, o pulo e sempre o inteiro e
-                 segurar nao faz nada.)
-
-O pulo e travado no RITMO: quando o toque chega com o Leo ainda no ar, ele
-fica guardado e o pulo sai no pouso -- mais curto (mesma altura, menos tempo),
-para pousar quando pousaria se tivesse saido na hora do toque. Assim um pouso
-atrasado (descer um degrau cai mais longe) nunca empurra os pulos seguintes.
-
-Bater num caco do chao, num bloco ou na parede de um degrau custa um coracao:
-o bloco se quebra, e Leo fica um instante invulneravel (piscando). Cair num
-fosso NAO tem volta: Leo desce ate os cacos do fundo e a partida acaba ali.
-Os ENXAMES das dunas pairam acima de quem corre: so ferem quem pula debaixo
-deles -- o obstaculo que pede para NAO tocar.
-
-A colisao e a do que se ve: contra o chao e as paredes vale a SOLA do Leo (o
-meio da caixa, onde o corpo dele esta), contra os cacos vale o CORPO -- com
-as pernas encolhidas quando ele esta no ar -- e o DESENHO de cada caco, ponta
-por ponta. Quem pousa rente a quina de um degrau sobe nele em vez de bater.
-"""
-
-import bisect
 import math
 
-from .config import (PASSO_FISICA, TILE, JOGADOR_TAM, LARGURA_APOIO, CORPO_LARGURA,
-                     CORPO_ALTURA, CORPO_FRENTE, FOLGA_PE, FOLGA_PE_AR, QUINA, PULO_MINIMO,
-                     CORTE_PULO, COYOTE, BUFFER_PULO, VIDAS, INVULNERAVEL)
+from PPlay.physics import KinematicBody, Physics
+from PPlay.window import Window
 
-MOLA_ALTURA = 6.0     # tiles que o salto da mola sobe (o pulo comum sobe 3,5)
+from .config import (TEMPINHO, QUADRADO, TAM_DO_LEO, LARG_DO_PE, QUINA, PULINHO,
+                     CORTA_O_PULO, PULO_ATRASADO, PULO_ADIANTADO, TEMPO_SEM_LEVAR_DANO)
+from .janela import Janelona
 
-APOIO = (JOGADOR_TAM - LARGURA_APOIO) * 0.5     # onde a sola comeca, dentro da caixa
+ALTURA_DA_MOLA = 6.0
 
-
-class Estado:
-    """Tudo que muda no jogador durante a partida."""
-
-    def __init__(self, fase):
-        self.x = 0.0
-        self.y = fase.chao_y - JOGADOR_TAM
-        self.vy = 0.0
-        self.tempo = 0.0
-        self.no_chao = True
-        self.coyote = 0.0         # segundos em que ainda da para pular apos sair do chao
-        self.buffer = 0.0         # segundos em que um toque recente ainda vale
-        self.vidas = VIDAS
-        self.invuln = 0.0
-        self.vivo = True
-        self.venceu = False
-        self.quebrados = set()    # blocos que Leo quebrou nesta tentativa
-        self.preso = False        # bateu na parede de dentro de um fosso: so resta cair
-        self.toque = -1.0         # instante do ultimo toque (o pulo guardado conta dali)
-        self.gravidade = fase.gravidade   # a do pulo em curso (um pulo encurtado e mais forte)
-        self.pulando = False      # no ar por causa de um pulo (e nao de uma queda)
-        self.y_saida = 0.0        # de onde o pulo saiu: mede o quanto ja subiu
-        self.cortou = False       # o botao ja foi solto neste pulo
-        self.fim_pulo = 0.0       # quando o pulo em curso pousa (no nivel de onde saiu)
-        # o que aconteceu NESTE passo (a partida le e reage)
-        self.acao = None          # "pulo" quando ele pulou neste passo
-        self.repetido = False     # o pulo saiu so por segurar o botao (sem toque novo)
-        self.dano = None          # "parede", "bloco", "perigo", "enxame", "pingente", "fosso" ou "abismo"
-        self.quebrou = None       # a celula do bloco que se quebrou agora
-        self.pousou = False
-        self.pouso = -1.0         # instante do ultimo pouso (a arte mostra o pe tocando o chao)
-        self.pulo = -1.0          # instante do ultimo pulo (a arte estica o corpo na saida)
-        self.impulso = None       # "mola" ou "orbe" quando o pulo deste passo foi um deles
-        self.orbes = set()        # indices dos orbes ja usados nesta tentativa
+APOIO = (TAM_DO_LEO - LARG_DO_PE) * 0.5
+SKIN = 0.001
 
 
-def _colunas(x):
-    """Colunas do grid sob a SOLA do jogador (o meio da caixa)."""
-    return int((x + APOIO) // TILE), int((x + APOIO + LARGURA_APOIO - 0.001) // TILE)
+def colunas_dele(x):
+    return int((x + APOIO) // QUADRADO), int((x + APOIO + LARG_DO_PE - SKIN) // QUADRADO)
 
 
-def _linhas(y):
-    return range(int(y // TILE), int((y + JOGADOR_TAM - 0.001) // TILE) + 1)
+def linhas_dele(y):
+    return range(int(y // QUADRADO), int((y + TAM_DO_LEO - SKIN) // QUADRADO) + 1)
 
 
-def _solido(fase, est, c, ty):
-    return (c, ty) in fase.solidos and (c, ty) not in est.quebrados
+def ta_solido(fase, leozinho, c, ty):
+    return (c, ty) in fase.solidos and (c, ty) not in leozinho.blocos_quebrados
 
 
-def corpo(est):
-    """
-    (x, y, largura, altura) da parte do Leo que os cacos ferem: pernas e
-    tronco como aparecem no sprite -- no ar, com as pernas encolhidas.
-    """
-    x = est.x + (JOGADOR_TAM - CORPO_LARGURA) * 0.5 + CORPO_FRENTE
-    folga = FOLGA_PE if est.no_chao else FOLGA_PE_AR
-    y = est.y + JOGADOR_TAM - folga - CORPO_ALTURA
-    return x, y, CORPO_LARGURA, CORPO_ALTURA
-
-
-def _mola(fase, est):
-    """A mola (x inicial, x final) sob o Leo, ou None."""
-    i = bisect.bisect_right(fase.molas_x, est.x) - 1
-    if i >= 0 and est.x < fase.molas[i][1]:
-        return fase.molas[i]
+def mola_embaixo(fase, leozinho):
+    for mola in fase.molas:
+        if mola.x <= leozinho.x < mola.fim:
+            return mola
     return None
 
 
-def _orbe(fase, est):
-    """O indice do orbe ainda nao usado ao alcance do Leo (o centro dele), ou None."""
-    cx, cy = est.x + JOGADOR_TAM * 0.5, est.y + JOGADOR_TAM * 0.5
-    for i, (ox, oy, rx, ry) in enumerate(fase.orbes):
-        if i not in est.orbes and abs(ox - cx) <= rx and abs(oy - cy) <= ry:
-            return i
-    return None
+def ta_livre(fase, leozinho, x, y):
+    for c in colunas_dele(x):
+        for ty in linhas_dele(y):
+            if ta_solido(fase, leozinho, c, ty):
+                return False
+    return True
 
 
-def _livre(fase, est, x, y):
-    """A caixa do Leo em (x, y) nao entra em nada solido?"""
-    c0, c1 = _colunas(x)
-    return not any(_solido(fase, est, c, ty) for c in (c0, c1) for ty in _linhas(y))
+def chao_seguro(fase, leozinho):
+    c0, c1 = colunas_dele(leozinho.x)
+    niveis = [fase.chao_por_coluna[c] for c in (c0, c1) if c in fase.chao_por_coluna]
+    if not niveis:
+        return fase.altura_do_chao(c1) * QUADRADO
+    return min(niveis) * QUADRADO
 
 
-def linha_segura(fase, est):
-    """
-    Altura (y) em que Leo pode ficar de pe agora: o chao mais alto das colunas
-    que ele cobre -- ou, se esta sobre um buraco, o da primeira coluna a
-    frente que tem chao. Blocos soltos nao contam.
-    """
-    c0, c1 = _colunas(est.x)
-    niveis = [fase.chao_col[c] for c in (c0, c1) if c in fase.chao_col]
-    return (min(niveis) if niveis else fase.nivel_chao(c1)) * TILE
+def bota_de_volta(fase, leozinho):
+    leozinho.y = chao_seguro(fase, leozinho) - TAM_DO_LEO
+    leozinho.vy = 0.0
+    leozinho.body.jump_buffer_timer = 0.0
+    leozinho.ta_pulando = False
 
 
-def _resgatar(fase, est):
-    """Recoloca Leo de pe na linha segura, sem mudar o x (ele nunca volta)."""
-    est.y = linha_segura(fase, est) - JOGADOR_TAM
-    est.vy = 0.0
-    est.buffer = 0.0
-    est.pulando = False
-
-
-def _baixar(fase, est):
-    """
-    O botao saiu na subida: refaz o resto do arco. O novo alto e o que o pulo
-    alcancaria com so CORTE_PULO da velocidade de agora (nunca menos que
-    PULO_MINIMO da altura), e o pouso continua no instante marcado: o arco
-    baixo e so mais lento para cair.
-    """
-    subiu = est.y_saida - est.y
-    alvo = max(fase.altura_pulo * PULO_MINIMO,
-               subiu + (CORTE_PULO * est.vy) ** 2 / (2.0 * est.gravidade))
-    resta = est.fim_pulo - est.tempo
-    if resta <= 0.0 or alvo <= subiu:
-        return
-    k = math.sqrt((alvo - subiu) / alvo)
-    ate_o_alto = resta * k / (1.0 + k)
-    est.gravidade = 2.0 * alvo / (resta - ate_o_alto) ** 2
-    est.vy = -est.gravidade * ate_o_alto
-
-
-def ferir(fase, est, motivo, resgatar=True):
-    """
-    Leo errou: tira um coracao (se nao estiver invulneravel) e o resgata.
-    Devolve True se foi o ultimo coracao.
-    """
-    if est.invuln <= 0.0:
-        est.vidas -= 1
-        est.dano = motivo
-        est.invuln = INVULNERAVEL * fase.dur_batida
-        if est.vidas <= 0:
-            est.vivo = False
+def machuca_leo(fase, leozinho, por_que, volta_pro_chao=True):
+    if leozinho.tempo_invencivel <= 0.0:
+        leozinho.vidas -= 1
+        leozinho.dano_agora = por_que
+        leozinho.tempo_invencivel = TEMPO_SEM_LEVAR_DANO * fase.tempo_da_batida
+        if leozinho.vidas <= 0:
+            leozinho.ta_vivo = False
             return True
-    if resgatar:
-        _resgatar(fase, est)
+    if volta_pro_chao:
+        bota_de_volta(fase, leozinho)
     return False
 
 
-def morrer(est, motivo):
-    """O fim sem volta: Leo caiu num fosso (ou no abismo)."""
-    est.vidas = 0
-    est.vivo = False
-    est.dano = motivo
+def mata(leozinho, por_que):
+    leozinho.vidas = 0
+    leozinho.ta_vivo = False
+    leozinho.dano_agora = por_que
 
 
-def passo(fase, est, pressionado, apertou, repetir=False, dt=PASSO_FISICA):
-    """
-    Avanca a simulacao em um passo.
+class FisicaDoJogo(Physics):
+    def __init__(self, fase):
+        super().__init__(gravidade=fase.gravidade, vel_terminal=fase.forca_do_pulo * 1.5)
+        self.fase = fase
+        self.SKIN = SKIN
+        self.PASSO_MINIMO = math.inf
 
-    `pressionado`: o botao esta segurado.   `apertou`: foi apertado agora.
-    `repetir`: o botao segurado vale como pulo a cada pouso.
-    """
-    if not est.vivo or est.venceu:
+    def processar_movimento(self, leo, solidos):
+        pes = leo.y + TAM_DO_LEO
+        vx, leo.vx = leo.vx, 0.0
+        super().processar_movimento(leo, ())
+        leo.vx = vx
+        fase = self.fase
+        c0, c1 = colunas_dele(leo.x)
+        if leo.vy > 0.0:
+            ty = int((leo.y + TAM_DO_LEO - self.SKIN) // QUADRADO)
+            pontes = fase.pontezinhas.quadradinhos_ocupados
+            ta_firme = ta_solido(fase, leo, c0, ty) or ta_solido(fase, leo, c1, ty)
+            if pes <= ty * QUADRADO + 0.5 and ((c0, ty) in pontes or (c1, ty) in pontes):
+                ta_firme = True
+            if ta_firme:
+                leo.y = ty * QUADRADO - TAM_DO_LEO
+                leo.vy = 0.0
+                leo.no_chao = True
+        elif leo.vy < 0.0:
+            ty = int(leo.y // QUADRADO)
+            if ta_solido(fase, leo, c0, ty) or ta_solido(fase, leo, c1, ty):
+                leo.y = (ty + 1) * QUADRADO
+                leo.vy = 0.0
+
+
+class FisicaDoLeo(KinematicBody):
+    def __init__(self, leo, fisica):
+        super().__init__(leo, fisica)
+        fase = fisica.fase
+        self.coyote_max = PULO_ATRASADO
+        self.jump_buffer_max = PULO_ADIANTADO * fase.tempo_da_batida
+        self.pulo = fase.forca_do_pulo
+        self.coyote_timer = 0.0
+        self.jump_buffer_timer = 0.0
+        self.ta_apertando = self.apertou_agora = False
+
+    def escuta(self, ta_apertando, apertou_agora):
+        self.ta_apertando, self.apertou_agora = ta_apertando, apertou_agora
+
+    def update(self, solidos):
+        dt = Window.get_instance().delta_time()
+        self.coyote_timer = max(0.0, self.coyote_timer - dt)
+        if self.apertou_agora:
+            self.jump_buffer_timer = self.jump_buffer_max
+        else:
+            self.jump_buffer_timer = max(0.0, self.jump_buffer_timer - dt)
+        self.anda_pra_frente()
+        if self.sprite.ta_vivo:
+            self.corta_pulo()
+            self.cai_no_chao(solidos)
+
+    def anda_pra_frente(self):
+        leozinho, fase = self.sprite, self.engine.fase
+        if not leozinho.ta_preso:
+            leozinho.vx = fase.velocidade_em(leozinho.x)
+            leozinho.move_x(leozinho.vx)
+        c0, coluna_da_direita = colunas_dele(leozinho.x)
+        onde_bateu = []
+        for ty in linhas_dele(leozinho.y):
+            if ta_solido(fase, leozinho, coluna_da_direita, ty):
+                onde_bateu.append(ty)
+        if not onde_bateu:
+            return
+        topo = min(onde_bateu) * QUADRADO
+        if leozinho.y + TAM_DO_LEO - topo <= QUINA and ta_livre(fase, leozinho, leozinho.x, topo - TAM_DO_LEO):
+            leozinho.y = topo - TAM_DO_LEO
+            leozinho.vy = min(leozinho.vy, 0.0)
+        elif all((coluna_da_direita, ty) in fase.torres.quadradinhos_ocupados for ty in onde_bateu):
+            for ty in onde_bateu:
+                leozinho.blocos_quebrados.add((coluna_da_direita, ty))
+            leozinho.quebrou_agora = (coluna_da_direita, onde_bateu[0])
+            machuca_leo(fase, leozinho, "bloco", volta_pro_chao=False)
+        elif c0 not in fase.chao_por_coluna:
+            leozinho.ta_preso = True
+            leozinho.x = coluna_da_direita * QUADRADO - APOIO - LARG_DO_PE
+            self.jump_buffer_timer = 0.0
+        else:
+            machuca_leo(fase, leozinho, "parede")
+
+    def corta_pulo(self):
+        leozinho, fase = self.sprite, self.engine.fase
+        if not leozinho.ta_pulando or leozinho.ja_cortou or leozinho.vy >= 0.0:
+            return
+        if self.ta_apertando or fase.sem_segurar:
+            return
+        if leozinho.y_de_onde_pulou - leozinho.y >= fase.altura_pra_cortar:
+            self.baixa_o_pulo()
+            leozinho.ja_cortou = True
+
+    def baixa_o_pulo(self):
+        leozinho, fisica = self.sprite, self.engine
+        subiu = leozinho.y_de_onde_pulou - leozinho.y
+        alvo = max(fisica.fase.altura_do_pulo * PULINHO,
+                   subiu + (CORTA_O_PULO * leozinho.vy) ** 2 / (2.0 * fisica.gravidade))
+        quanto_resta = leozinho.quando_acaba_o_pulo - leozinho.tempo
+        if quanto_resta <= 0.0 or alvo <= subiu:
+            return
+        k = math.sqrt((alvo - subiu) / alvo)
+        tempo_ate_o_alto = quanto_resta * k / (1.0 + k)
+        fisica.gravidade = 2.0 * alvo / (quanto_resta - tempo_ate_o_alto) ** 2
+        leozinho.vy = -fisica.gravidade * tempo_ate_o_alto
+
+    def cai_no_chao(self, solidos):
+        leozinho, fisica = self.sprite, self.engine
+        tava_no_chao = leozinho.no_chao
+        fisica.processar_movimento(leozinho, solidos)
+        if leozinho.no_chao:
+            self.coyote_timer = self.coyote_max
+            fisica.gravidade = fisica.fase.gravidade
+            leozinho.ta_pulando = False
+            leozinho.acabou_de_pousar = not tava_no_chao
+            if leozinho.acabou_de_pousar:
+                leozinho.pouso = leozinho.tempo
+
+    def ta_apoiado(self):
+        return self.sprite.no_chao or self.coyote_timer > 0.0
+
+    def salta(self, forca):
+        leozinho = self.sprite
+        leozinho.no_chao = True
+        leozinho.pular(forca)
+        self.jump_buffer_timer = 0.0
+        leozinho.o_que_fez = "pulo"
+        leozinho.pulo = leozinho.tempo
+
+
+def passo(fase, leozinho, ta_apertando, apertou_agora, repetir):
+    dt = TEMPINHO
+    if not leozinho.ta_vivo or leozinho.ganhou:
         return
-    est.tempo += dt
-    est.acao = est.dano = est.quebrou = est.impulso = None
-    est.repetido = est.pousou = False
-    est.invuln = max(0.0, est.invuln - dt)
-    est.coyote = max(0.0, est.coyote - dt)
-    est.buffer = BUFFER_PULO * fase.dur_batida if apertou else max(0.0, est.buffer - dt)
-    if apertou:
-        est.toque = est.tempo
+    leozinho.tempo += dt
+    leozinho.o_que_fez = leozinho.dano_agora = leozinho.quebrou_agora = leozinho.quem_jogou = None
+    leozinho.pulou_sozinho = leozinho.acabou_de_pousar = False
+    leozinho.tempo_invencivel = max(0.0, leozinho.tempo_invencivel - dt)
+    if apertou_agora:
+        leozinho.hora_do_toque = leozinho.tempo
 
-    # 1. anda para a direita. Entrar numa parede e bater -- a nao ser que so a
-    # ponta do pe tenha passado da quina de cima: ai ele sobe no degrau, que e
-    # o que o olho ve acontecer. Um bloco solto nao segura o Leo: se quebra.
-    # E quem bate na parede de DENTRO de um fosso (sem chao sob a sola) nao e
-    # resgatado: fica preso ali e desce ate os cacos do fundo.
-    if not est.preso:
-        est.x += fase.vx_em(est.x) * dt
-    c0, c_dir = _colunas(est.x)
-    batidas = [ty for ty in _linhas(est.y) if _solido(fase, est, c_dir, ty)]
-    if batidas:
-        topo = min(batidas) * TILE
-        no_fosso = c0 not in fase.chao_col             # a sola esta sobre o vazio
-        if est.y + JOGADOR_TAM - topo <= QUINA and _livre(fase, est, est.x, topo - JOGADOR_TAM):
-            est.y = topo - JOGADOR_TAM
-            est.vy = min(est.vy, 0.0)
-        elif all((c_dir, ty) in fase.celulas_bloco for ty in batidas):
-            est.quebrados.update((c_dir, ty) for ty in batidas)
-            est.quebrou = (c_dir, batidas[0])
-            if ferir(fase, est, "bloco", resgatar=False):
+    leozinho.body.escuta(ta_apertando, apertou_agora)
+    with Janelona.com_esse_tempo(dt):
+        leozinho.update_physics(fase.solidos)
+    if not leozinho.ta_vivo:
+        return
+
+    if leozinho.y > fase.y_do_abismo:
+        mata(leozinho, "abismo")
+        return
+    ve_se_bateu(fase, leozinho)
+    if not leozinho.ta_vivo:
+        return
+    tenta_pular(fase, leozinho, repetir and not fase.sem_segurar, dt)
+    if leozinho.x >= fase.x_do_fim:
+        leozinho.ganhou = True
+
+
+def ve_se_bateu(fase, leozinho):
+    corpo = leozinho.corpo()
+    n_colunas = range(int(corpo.x // QUADRADO), int((corpo.x + corpo.width) // QUADRADO) + 1)
+    for tx in n_colunas:
+        perigo = fase.perigos_por_coluna.em(tx).collided(corpo)
+        if perigo is not None:
+            if perigo.mata_na_hora:
+                mata(leozinho, "fosso")
                 return
-        elif no_fosso:
-            est.preso = True
-            est.x = c_dir * TILE - APOIO - LARGURA_APOIO      # encostado na parede
-            est.buffer = 0.0
-        elif ferir(fase, est, "parede"):
+            if machuca_leo(fase, leozinho, "perigo"):
+                return
+        if leozinho.dano_agora:
+            break
+    if leozinho.tempo_invencivel > 0.0:
+        return
+    for tx in n_colunas:
+        voador = fase.voadores_por_coluna.em(tx).collided(corpo)
+        if voador is not None:
+            machuca_leo(fase, leozinho, voador.tipo, volta_pro_chao=False)
             return
 
-    # 2. a altura do pulo: com o botao solto na subida, o arco fica mais baixo
-    # -- quanto mais cedo soltar, mais baixo --, mas pousa no MESMO lugar e na
-    # mesma batida. O corte so vale depois que o Leo sobe `altura_corte`: todo
-    # toque rapido da o MESMO pulo baixo (PULO_MINIMO da altura). Na fase so
-    # de toques o pulo e sempre o inteiro.
-    if (est.pulando and not est.cortou and est.vy < 0.0 and not pressionado and
-            not fase.so_toques and est.y_saida - est.y >= fase.altura_corte):
-        _baixar(fase, est)
-        est.cortou = True
 
-    # gravidade e colisao vertical com o que e solido
-    est.vy = min(est.vy + est.gravidade * dt, fase.v_pulo * 1.5)
-    y_antes = est.y
-    est.y += est.vy * dt
-    estava_no_chao = est.no_chao
-    est.no_chao = False
-    c0, c1 = _colunas(est.x)
-    if est.vy > 0.0:
-        ty = int((est.y + JOGADOR_TAM - 0.001) // TILE)
-        # a PASSARELA so segura quem vem de cima: por baixo e pelos lados, passa-se
-        if (_solido(fase, est, c0, ty) or _solido(fase, est, c1, ty) or
-                (((c0, ty) in fase.pontes or (c1, ty) in fase.pontes) and
-                 y_antes + JOGADOR_TAM <= ty * TILE + 0.5)):
-            est.y = ty * TILE - JOGADOR_TAM
-            est.vy = 0.0
-            est.no_chao = True
-    elif est.vy < 0.0:
-        ty = int(est.y // TILE)
-        if _solido(fase, est, c0, ty) or _solido(fase, est, c1, ty):
-            est.y = (ty + 1) * TILE
-            est.vy = 0.0
-
-    if est.no_chao:
-        est.coyote = COYOTE
-        est.gravidade = fase.gravidade        # de pe, qualquer queda e a normal
-        est.pulando = False
-        est.pousou = not estava_no_chao
-        if est.pousou:
-            est.pouso = est.tempo
-
-    # 3. caiu alem de tudo: o abismo
-    if est.y > fase.limite_baixo:
-        morrer(est, "abismo")
+def tenta_pular(fase, leozinho, repetir, dt):
+    corpo = leozinho.body
+    guardado = corpo.jump_buffer_timer > 0.0
+    if not corpo.ta_apoiado():
+        if guardado and not leozinho.ta_preso:
+            pula_na_luz(fase, leozinho)
         return
+    mola = mola_embaixo(fase, leozinho)
+    foi_lancado = False
+    if mola is not None and leozinho.no_chao:
+        foi_lancado = leozinho.x + fase.velocidade_em(leozinho.x) * dt >= mola.fim
+    if leozinho.ta_preso or not (guardado or repetir or foi_lancado):
+        return
+    atraso = 0.0
+    if guardado:
+        atraso = max(0.0, min(leozinho.tempo - leozinho.hora_do_toque, 0.3 * fase.tempo_do_pulo))
+    altura = fase.altura_do_pulo
+    duracao = fase.tempo_do_pulo - atraso
+    if mola is not None:
+        altura = ALTURA_DA_MOLA * QUADRADO
+        duracao = 2.0 * fase.tempo_do_pulo - atraso
+        leozinho.quem_jogou = "mola"
+    corpo.engine.gravidade = 8.0 * altura / duracao ** 2
+    leozinho.pulou_sozinho = not guardado and not foi_lancado
+    leozinho.ta_pulando = mola is None
+    leozinho.ja_cortou = mola is not None
+    leozinho.y_de_onde_pulou = leozinho.y
+    leozinho.quando_acaba_o_pulo = leozinho.tempo + duracao
+    corpo.coyote_timer = 0.0
+    corpo.salta(4.0 * altura / duracao)
 
-    # 4. cacos: o corpo do Leo contra o desenho de cada caco das colunas dele.
-    # Os do fundo de um fosso matam sempre, invulneravel ou nao.
-    bx, by, bw, bh = corpo(est)
-    for tx in range(int(bx // TILE), int((bx + bw) // TILE) + 1):
-        for p in fase.col_perigos.get(tx, ()):
-            if (p.fatal or est.invuln <= 0.0) and p.colide(bx, by, bw, bh):
-                if p.fatal:
-                    morrer(est, "fosso")
-                    return
-                if ferir(fase, est, "perigo"):
-                    return
-                break
-        if est.dano:
-            break
 
-    # 4b. enxames e pingentes: ficam ACIMA de quem corre e so pegam quem pula
-    # (o pingente, so quem pula ALTO). Quem bate num deles perde o coracao mas
-    # segue o arco (nao ha chao para o resgate).
-    if est.invuln <= 0.0:
-        for tx in range(int(bx // TILE), int((bx + bw) // TILE) + 1):
-            for vx, vy, vw, vh, tipo in fase.col_voadores.get(tx, ()):
-                if bx < vx + vw and bx + bw > vx and by < vy + vh and by + bh > vy:
-                    if ferir(fase, est, tipo, resgatar=False):
-                        return
-                    break
-            if est.dano:
-                break
-
-    # 5. pulo: um toque recente, ou o botao segurado
-    # (menos na fase so de toques, em que segurar nao pula de novo).
-    repetir = repetir and not fase.so_toques
-    # Toque guardado no ar: o pulo sai agora, encurtado para pousar no tempo
-    # do toque -- a mesma altura, em menos tempo (ate 30% mais curto).
-    # A MOLA: o pulo que sai de cima dela e o salto grande (MOLA_ALTURA de
-    # altura, o dobro do tempo e do comprimento) -- e quem chega ao fim da mola
-    # sem tocar e lancado do mesmo jeito: ninguem passa reto por ela.
-    mola = _mola(fase, est) if est.no_chao or est.coyote > 0.0 else None
-    lancado = (mola is not None and est.no_chao and
-               est.x + fase.vx_em(est.x) * dt >= mola[1])
-    # O ORBE: um toque NO AR, perto dele, e um pulo novo dali mesmo.
-    orbe = None
-    if not est.no_chao and est.coyote <= 0.0 and est.buffer > 0.0 and not est.preso:
-        orbe = _orbe(fase, est)
-    if orbe is not None:
-        est.orbes.add(orbe)
-        est.gravidade = fase.gravidade
-        est.vy = -fase.v_pulo
-        est.pulando, est.cortou = False, True          # sempre o pulo inteiro
-        est.buffer = 0.0
-        est.acao, est.impulso = "pulo", "orbe"
-        est.pulo = est.tempo
-    elif (not est.preso and (est.buffer > 0.0 or repetir or lancado) and
-            (est.no_chao or est.coyote > 0.0)):
-        atraso = min(est.tempo - est.toque, 0.3 * fase.duracao_pulo) if est.buffer > 0.0 else 0.0
-        duracao = fase.duracao_pulo - max(0.0, atraso)
-        altura = fase.altura_pulo
-        if mola is not None:
-            duracao = 2.0 * fase.duracao_pulo - max(0.0, atraso)
-            altura = MOLA_ALTURA * TILE
-            est.impulso = "mola"
-        est.gravidade = 8.0 * altura / duracao ** 2
-        est.vy = -4.0 * altura / duracao
-        est.repetido = est.buffer <= 0.0 and not lancado
-        # o salto da mola nao se encurta soltando o botao: e sempre o inteiro
-        est.pulando, est.y_saida, est.cortou = mola is None, est.y, mola is not None
-        est.fim_pulo = est.tempo + duracao
-        est.no_chao = False
-        est.coyote = 0.0
-        est.buffer = 0.0
-        est.acao = "pulo"
-        est.pulo = est.tempo
-
-    if est.x >= fase.fim_x:
-        est.venceu = True
+def pula_na_luz(fase, leozinho):
+    orbe = leozinho.orbes.collided(leozinho.centro())
+    if orbe is None:
+        return
+    leozinho.orbes.remove(orbe)
+    leozinho.body.engine.gravidade = fase.gravidade
+    leozinho.ta_pulando = False
+    leozinho.ja_cortou = True
+    leozinho.quem_jogou = "orbe"
+    leozinho.body.salta(leozinho.body.pulo)

@@ -176,9 +176,8 @@ para ficarem pixelados, com camadas em parallax e partículas próprias de cada 
 vaga-lumes, areia, neve e brasas, que mudam junto com as partes da música.
 
 O Léo vem da folha de sprites gratuita Male Hero, da Ozzbit Games, e o Léo de pijama da
-cena de abertura foi desenhado para o jogo. O total de assets é de cerca de 390 imagens,
-entre cenários, peças de jogo, interface e animações, quase todas pintadas por código, por
-geradores que escrevemos para isso.
+cena de abertura foi feito para o jogo. As demais artes também foram feitas para o jogo,
+num total de cerca de 240 imagens, entre cenários, peças de jogo, interface e animações.
 
 As referências principais são **Geometry Dash**, pela fase como corrida sincronizada, pela
 leitura visual do cenário em alta velocidade e pela indicação do progresso em porcentagem,
@@ -193,7 +192,7 @@ custava um coração e passou a custar só os pontos, e o coração ficou para a
 obstáculos; os personagens Eco, Estática e Metrônomo deram lugar aos
 obstáculos de cada mundo; e as formas geométricas em ciano e magenta deram lugar à pixel
 art, com uma paleta por mundo. Os cenários, que víamos como uma das nossas possíveis
-dificuldades, foram resolvidos pintando a arte por código.
+dificuldades, foram feitos para os cinco mundos.
 
 Para manter as fases justas, um robô joga cada uma delas com a física real do jogo, com
 toques perfeitos, adiantados, atrasados, alternando adiantado e atrasado e sorteados dentro

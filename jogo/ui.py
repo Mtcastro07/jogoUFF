@@ -1,254 +1,133 @@
-"""
-Kit de interface: fonte pixelada, texto, paineis, barras, botoes e menus.
-
-A fonte e a Silkscreen (SIL OFL), renderizada SEM antialias para continuar
-pixel art. Cada texto e rasterizado uma vez e guardado em cache.
-"""
-
-import math
-
 import pygame
 
 from . import arte
-from .config import FONTE, BRANCO, PAINEL, AZUL, CINZA, CONTORNO, LARGURA
+from .imagem import Desenho
+from .config import FONTE, BRANCO, CONTORNO, LARG_TELA
 
-_fontes = {}
-_textos = {}
-_imagens = {}
+fontes_prontas = {}
+textos_prontos = {}
+imagens_prontas = {}
+_objetos = {}
 
 
 def imagem(nome, escala=1):
-    """
-    Peca de assets/art/ui/ ampliada por `escala`, sem suavizar -- ou None, e
-    quem chamou desenha por codigo, como antes da arte existir.
-    """
     chave = (nome, escala)
-    if chave not in _imagens:
-        img = arte.png("ui", nome)
-        _imagens[chave] = img if img is None or escala == 1 else pygame.transform.scale_by(img, escala)
-    return _imagens[chave]
+    if chave not in imagens_prontas:
+        img = arte.pega_png("ui", nome)
+        if escala != 1:
+            img = pygame.transform.scale_by(img, escala)
+        imagens_prontas[chave] = img
+    return imagens_prontas[chave]
+
+
+def objeto(nome, escala=1):
+    chave = (nome, escala)
+    if chave not in _objetos:
+        _objetos[chave] = Desenho(imagem(nome, escala))
+    return _objetos[chave]
 
 
 def fonte(tam):
-    f = _fontes.get(tam)
-    if f is None:
-        f = _fontes[tam] = pygame.font.Font(FONTE, tam)
-    return f
+    if tam not in fontes_prontas:
+        fontes_prontas[tam] = pygame.font.Font(FONTE, tam)
+    return fontes_prontas[tam]
 
 
-def texto(s, tam, cor=BRANCO, contorno=None):
-    chave = (s, tam, cor, contorno)
-    surf = _textos.get(chave)
-    if surf is None:
-        if len(_textos) > 2000:
-            _textos.clear()
-        # o "&" da Silkscreen parece um "$": nos creditos ("Dosi & Aisake") vira "E"
-        surf = fonte(tam).render(s.replace("&", "E"), False, cor)
-        if contorno is not None:
-            # o contorno faz o texto do HUD ler em cima de qualquer ceu
-            surf = arte.contornar(surf.convert_alpha(), contorno, max(2, tam // 16))
-        _textos[chave] = surf
-    return surf
+def texto(s, tam, cor=BRANCO, borda_cor=None):
+    chave = (s, tam, cor, borda_cor)
+    if chave not in textos_prontos:
+        if len(textos_prontos) > 2000:
+            textos_prontos.clear()
+        img = fonte(tam).render(s.replace("&", "E"), False, cor)
+        if borda_cor is not None:
+            img = arte.faz_contorno(img.convert_alpha(), borda_cor, max(2, tam // 16))
+        textos_prontos[chave] = img
+    return textos_prontos[chave]
 
 
-def desenhar_texto(tela, s, tam, x, y, cor=BRANCO, alinhar="centro", contorno=None):
-    """Desenha `s` com o centro vertical em `y`; `alinhar` diz o que fica em `x`."""
-    surf = texto(s, tam, cor, contorno)
-    if alinhar == "centro":
-        x -= surf.get_width() // 2
-    elif alinhar == "direita":
-        x -= surf.get_width()
-    tela.blit(surf, (int(x), int(y - surf.get_height() // 2)))
-    return surf
+def escreve(tela, s, tam, x, y, cor=BRANCO, lado_do_texto="centro", borda_cor=None):
+    img = texto(s, tam, cor, borda_cor)
+    if lado_do_texto == "centro":
+        x -= img.get_width() // 2
+    elif lado_do_texto == "direita":
+        x -= img.get_width()
+    tela.blit(img, (int(x), int(y - img.get_height() // 2)))
 
 
-def desenhar_texto_ajustado(tela, s, tam, x, y, largura_max, cor=BRANCO):
-    """Como `desenhar_texto` (centrado), diminuindo o corpo ate caber em `largura_max`."""
-    while tam > 10 and texto(s, tam, cor).get_width() > largura_max:
+def escreve_cabendo(tela, s, tam, x, y, cabe_ate, cor=BRANCO):
+    while tam > 10 and texto(s, tam, cor).get_width() > cabe_ate:
         tam -= 2
-    return desenhar_texto(tela, s, tam, x, y, cor)
+    escreve(tela, s, tam, x, y, cor)
 
 
-# Molduras 9-slice (assets/art/ui/moldura_*.png): nome -> quina, em px da arte.
-# Quinas ficam como desenhadas; lados e miolo esticam a partir de uma faixa de
-# 1 pixel da arte, entao nenhum enfeite se repete nem deforma. Ampliadas 2x.
 MOLDURAS = {"padrao": 10, "foco": 10, "bosque": 12, "dunas": 12, "ilhas": 12, "geleira": 12,
             "eclipse": 14}
-ESCALA_MOLDURA = 2
-_molduras = {}
+ESCALA_DA_MOLDURA = 2
+molduras_prontas = {}
 
 
-def _nove_fatias(img, quina, w, h, k):
-    fonte_ = pygame.transform.scale_by(img, k)
-    q, fw, fh = quina * k, fonte_.get_width(), fonte_.get_height()
-    q = min(q, w // 2, h // 2)
+def corta_em_nove(img, quina, w, h):
+    k = ESCALA_DA_MOLDURA
+    img = pygame.transform.scale_by(img, k)
+    fw, fh = img.get_size()
+    q = quina * k
+    n_colunas = ((0, q, 0, q), (q, k, q, w - 2 * q), (fw - q, q, w - q, q))
+    linhas = ((0, q, 0, q), (q, k, q, h - 2 * q), (fh - q, q, h - q, q))
     s = pygame.Surface((w, h), pygame.SRCALPHA)
-    def pedaco(x, y, pw, ph, dx, dy, dw, dh):
-        if dw > 0 and dh > 0:
-            s.blit(pygame.transform.scale(fonte_.subsurface((x, y, pw, ph)), (dw, dh)), (dx, dy))
-    mw, mh = w - 2 * q, h - 2 * q
-    for (sx, dx) in ((0, 0), (fw - q, w - q)):                 # quinas
-        for (sy, dy) in ((0, 0), (fh - q, h - q)):
-            pedaco(sx, sy, q, q, dx, dy, q, q)
-    pedaco(q, 0, k, q, q, 0, mw, q)                             # lados
-    pedaco(q, fh - q, k, q, q, h - q, mw, q)
-    pedaco(0, q, q, k, 0, q, q, mh)
-    pedaco(fw - q, q, q, k, w - q, q, q, mh)
-    pedaco(q, q, k, k, q, q, mw, mh)                            # miolo
+    for x, pw, dx, dw in n_colunas:
+        for y, ph, dy, dh in linhas:
+            if dw > 0 and dh > 0:
+                pedaco = img.subsurface((x, y, pw, ph))
+                s.blit(pygame.transform.scale(pedaco, (dw, dh)), (dx, dy))
     return s
 
 
-def moldura(tela, nome, x, y, w, h, alpha=255):
-    """Desenha a moldura `nome` esticada para w x h. False se nao ha arte."""
-    img = arte.png("ui", f"moldura_{nome}.png")
-    if img is None:
-        return False
-    chave = (nome, int(w), int(h), alpha)
-    s = _molduras.get(chave)
-    if s is None:
-        if len(_molduras) > 200:
-            _molduras.clear()
-        s = _molduras[chave] = _nove_fatias(img, MOLDURAS[nome], int(w), int(h), ESCALA_MOLDURA)
+def desenha_moldura(tela, nome, x, y, w, h, alpha=255):
+    w, h = int(w), int(h)
+    chave = (nome, w, h, alpha)
+    if chave not in molduras_prontas:
+        if len(molduras_prontas) > 200:
+            molduras_prontas.clear()
+        s = corta_em_nove(arte.pega_png("ui", f"moldura_{nome}.png"), MOLDURAS[nome], w, h)
         if alpha < 255:
             s.set_alpha(alpha)
-    tela.blit(s, (int(x), int(y)))
-    return True
+        molduras_prontas[chave] = s
+    tela.blit(molduras_prontas[chave], (int(x), int(y)))
 
 
-def painel(tela, x, y, w, h, cor=PAINEL, borda=AZUL, alpha=220):
-    s = pygame.Surface((int(w), int(h)), pygame.SRCALPHA)
-    s.fill((*cor, alpha))
-    tela.blit(s, (int(x), int(y)))
-    if borda is not None:
-        pygame.draw.rect(tela, borda, (int(x), int(y), int(w), int(h)), 3)
-
-
-def barra(tela, x, y, w, h, valor, cor):
-    x, y, w, h = int(x), int(y), int(w), int(h)
-    trilho = arte.png("ui", "trilho.png")
-    if trilho is not None:
-        # o trilho de pontas de diamante: 8 px de ponta, e o miolo tem a altura da barra
-        k = ESCALA_MOLDURA
-        t = pygame.transform.scale_by(trilho, k)
-        ponta, alto = 8 * k, t.get_height()
-        y0 = y + h // 2 - alto // 2
-        tela.blit(t, (x - ponta, y0), (0, 0, ponta, alto))
-        tela.blit(pygame.transform.scale(t.subsurface((ponta, 0, k, alto)), (w, alto)), (x, y0))
-        tela.blit(t, (x + w, y0), (t.get_width() - ponta, 0, ponta, alto))
-    else:
-        pygame.draw.rect(tela, arte.escurecer(cor, 0.8), (x, y, w, h))
-    cheio = int(w * max(0.0, min(1.0, valor)))
-    if cheio:
-        pygame.draw.rect(tela, cor, (x, y, cheio, h))
-        pygame.draw.rect(tela, arte.clarear(cor, 0.5), (x, y, cheio, 3))
-    if trilho is None:
-        pygame.draw.rect(tela, arte.clarear(cor, 0.2), (x, y, w, h), 2)
-
-
-def escurecer_tela(tela, alpha):
+def escurece_tela(tela, alpha):
     s = pygame.Surface(tela.get_size(), pygame.SRCALPHA)
     s.fill((0, 0, 0, alpha))
     tela.blit(s, (0, 0))
 
 
-def suave(x):
-    """0..1 -> 0..1 com entrada e saida macias (para animar posicoes)."""
+def suaviza(x):
     x = max(0.0, min(1.0, x))
     return x * x * (3.0 - 2.0 * x)
 
 
-class Botao:
-    def __init__(self, rotulo, x, y, w=440, h=64, cor=AZUL):
-        self.rotulo = rotulo
-        self.rect = pygame.Rect(int(x), int(y), int(w), int(h))
-        self.cor = cor
-        self.foco = 0.0           # 0..1: o foco cresce e some aos poucos, sem estalo
-
-    def desenhar(self, tela, focado):
-        self.foco += ((1.0 if focado else 0.0) - self.foco) * 0.3
-        if abs(self.foco - round(self.foco)) < 0.01:
-            self.foco = float(round(self.foco))
-        k = self.foco
-        r = self.rect.inflate(int(16 * k), int(8 * k))
-        realce = k > 0.5
-        if not moldura(tela, "foco" if realce else "padrao", r.x, r.y, r.w, r.h):
-            painel(tela, r.x, r.y, r.w, r.h, arte.escurecer(self.cor, 0.85) if realce else PAINEL,
-                   self.cor if realce else CINZA)
-        if k > 0.05:
-            # a barrinha na cor da acao (verde segue, vermelho sai), por dentro
-            # da borda; ela cresce do meio junto com o foco
-            alto = int((r.h - 28) * k)
-            pygame.draw.rect(tela, self.cor, (r.x + 16, r.centery - alto // 2, 6, alto))
-        desenhar_texto(tela, self.rotulo, 26, r.centerx + int(8 * k), r.centery,
-                       BRANCO if realce else APAGADO)
-        if k > 0.5:
-            # as setinhas que abracam o botao em foco, respirando
-            vai = int(3 * math.sin(pygame.time.get_ticks() * 0.008))
-            for lado in (-1, 1):
-                x = r.centerx + lado * (r.w // 2 + 22 + vai)
-                pygame.draw.polygon(tela, CONTORNO, [(x + lado * 12, r.centery - 13),
-                                                     (x - lado * 5, r.centery), (x + lado * 12, r.centery + 13)])
-                pygame.draw.polygon(tela, self.cor, [(x + lado * 9, r.centery - 8),
-                                                     (x - lado * 1, r.centery), (x + lado * 9, r.centery + 8)])
-
-
-APAGADO = (196, 202, 228)        # texto que nao esta em foco: ainda se le sobre o painel
+COR_APAGADA = (196, 202, 228)
 TECLA = (226, 230, 244)
 
 
-def dicas(tela, pares, y, alfa_fundo=120):
-    """
-    A linha de ajuda do rodape: cada tecla desenhada como uma TECLA (um chip
-    claro com a letra escura) e, ao lado, o que ela faz. `pares` e uma lista de
-    (tecla, acao). Centrada em `y`.
-    """
-    pecas, larg = [], 0
-    for tecla, acao in pares:
+def dicas(tela, pares, y):
+    pecas = []
+    larg = 0
+    for tecla, o_que_faz in pares:
         t = texto(tecla, 16, CONTORNO)
-        a = texto(acao, 16, APAGADO, CONTORNO)
+        a = texto(o_que_faz, 16, COR_APAGADA, CONTORNO)
         pecas.append((t, a))
         larg += t.get_width() + 20 + 10 + a.get_width()
     larg += 36 * (len(pecas) - 1)
-    x = (LARGURA - larg) // 2
+    x = (LARG_TELA - larg) // 2
     faixa = pygame.Surface((larg + 48, 40), pygame.SRCALPHA)
-    faixa.fill((*CONTORNO, alfa_fundo))
+    faixa.fill((*CONTORNO, 120))
     tela.blit(faixa, (x - 24, int(y) - 20))
     for t, a in pecas:
         w = t.get_width() + 20
         pygame.draw.rect(tela, CONTORNO, (x - 2, int(y) - 15, w + 4, 32))
-        pygame.draw.rect(tela, arte.escurecer(TECLA, 0.35), (x, int(y) - 13, w, 28))
+        pygame.draw.rect(tela, arte.escurece_cor(TECLA, 0.35), (x, int(y) - 13, w, 28))
         pygame.draw.rect(tela, TECLA, (x, int(y) - 13, w, 24))
         tela.blit(t, (x + 10, int(y) - 1 - t.get_height() // 2))
         tela.blit(a, (x + w + 10, int(y) - a.get_height() // 2))
         x += w + 10 + a.get_width() + 36
-
-
-class Menu:
-    """Lista de botoes navegavel por teclado (cima/baixo) e por mouse."""
-
-    def __init__(self, botoes):
-        self.botoes = botoes
-        self.indice = 0
-
-    def mover(self, d):
-        self.indice = (self.indice + d) % len(self.botoes)
-
-    def passar_mouse(self, pos):
-        for i, b in enumerate(self.botoes):
-            if b.rect.collidepoint(pos):
-                self.indice = i
-
-    def clique(self, pos):
-        """Rotulo do botao clicado, ou None."""
-        for b in self.botoes:
-            if b.rect.collidepoint(pos):
-                return b.rotulo
-        return None
-
-    @property
-    def atual(self):
-        return self.botoes[self.indice].rotulo
-
-    def desenhar(self, tela):
-        for i, b in enumerate(self.botoes):
-            b.desenhar(tela, i == self.indice)

@@ -1,31 +1,48 @@
-# Ambiente virtual: cada um cria o seu (veja COMO RODAR no topo do main.py)
+# Coisas da sua maquina
 .venv/
 venv/
-
-# Bytecode que o Python gera ao rodar o jogo
 __pycache__/
 *.py[cod]
+.DS_Store
+._*
+.vscode/
 
-# Recordes do jogador: o jogo cria e grava sozinho (jogo/save.py)
+# Recordes de quem joga (o jogo cria sozinho)
 savegame.json
 savegame.json.tmp
 
-# macOS
-.DS_Store
-._*
-
-# Sobras da tentativa de recuperar a versao antiga do jogo a partir dos .pyc
-/*_dis.txt
-/*_decompiled.py
-/scratch.py
-
-# Pasta de configuracao do Claude criada por engano com um "~" literal (tem credenciais)
+# Pasta criada por engano
 /~/
 
-# Videos renderizados (o trailer tem mais de 100 MB, acima do limite do GitHub):
-# vao para o YouTube/itch.io, nao para o repositorio
-*.mp4
+# Zips do jogo e o que o empacotador gera
+dist/
+build/
 
-# Faixas originais e versoes longas, guardadas so para refazer as edicoes
-# (ferramentas/geradores/editar_musica.py); o jogo usa as de assets/music
-ferramentas/musica_fonte/
+# Ferramentas de producao (o jogo nao usa)
+ferramentas/
+
+# Videos, artes de divulgacao, pdfs e rascunhos
+*.mp4
+docs/*.pdf
+docs/*.png
+/estudo_direcao_trailer.md
+/image.png
+/scratch.py
+/*_dis.txt
+/*_decompiled.py
+
+# Arte e som que o jogo nao abre
+assets/art/LEIAME.md
+assets/art/objetos 2/
+assets/art/Painel e botao/
+assets/art/personagens/Full_Sprint/
+assets/art/personagens/Running_Jump/
+assets/art/objetos/jogo/*.png
+assets/art/objetos/jogo/*/ponte_*.png
+assets/art/objetos/jogo/*/coluna_*.png
+assets/art/objetos/jogo/*/chao.png
+assets/art/trailer/foto.png
+assets/sfx/ponte.wav
+male_hero_free/individual_sheets/*
+!male_hero_free/individual_sheets/male_hero-fall.png
+!male_hero_free/individual_sheets/male_hero-fall_loop.png

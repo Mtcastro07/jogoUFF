@@ -1,87 +1,94 @@
-"""Recordes das fases, num JSON simples ao lado do jogo."""
-
 import json
 import os
 
-from .config import ARQUIVO_SAVE
+from .config import ONDE_SALVA
 
-VERSAO = 2   # sobe quando o formato muda
-# Ate a versao 1 o recorde era guardado pela POSICAO da fase na lista (0, 1, 2).
-# Com fases novas entrando no meio da ordem, a chave passou a ser o nome do
-# mundo: um save antigo e convertido ao abrir, e nenhum recorde muda de dono.
-MUNDOS_V1 = {"0": "bosque", "1": "ilhas", "2": "eclipse"}
-
+VERSAO = 2
 VAZIO = {"melhor": 0.0, "completou": False, "pontos": 0, "nota": "-",
          "precisao": 0.0, "ecos": 0}
-OPCOES = {"musica": 10, "sfx": 10, "atraso": 0}     # so "musica" (0 a 10) ainda e usada
-ORDEM_NOTAS = {"-": 0, "C": 1, "B": 2, "A": 3, "S": 4}
+ORDEM_DAS_NOTAS = ["-", "C", "B", "A", "S"]
 
 
-class Save:
+def valor_presta(nome, valor):
+    if nome not in VAZIO:
+        return False
+    if nome == "nota":
+        return valor in ORDEM_DAS_NOTAS
+    if nome == "completou":
+        return type(valor) is bool
+    return type(valor) in (int, float)
+
+
+class Salvo:
     def __init__(self):
         self.recordes = {}
-        self.opcoes = dict(OPCOES)
-        self.final_visto = False      # o final (jogo/final.py) ja tocou uma vez?
-        self.carregar()
+        self.opcoes = {"musica": 10, "sfx": 10, "atraso": 0}
+        self.final_visto = False
+        self.carrega_save()
 
-    def carregar(self):
+    def carrega_save(self):
         try:
-            with open(ARQUIVO_SAVE, "r", encoding="utf-8") as f:
+            with open(ONDE_SALVA, "r", encoding="utf-8") as f:
                 dados = json.load(f)
-        except (OSError, ValueError):
-            return
-        if dados.get("versao") in (1, VERSAO) and isinstance(dados.get("recordes"), dict):
-            self.recordes = dados["recordes"]
-            if dados["versao"] == 1:
-                self.recordes = {MUNDOS_V1[k]: v for k, v in self.recordes.items()
-                                 if k in MUNDOS_V1}
-            if isinstance(dados.get("opcoes"), dict):
-                for k in OPCOES:
-                    if isinstance(dados["opcoes"].get(k), int):
-                        self.opcoes[k] = dados["opcoes"][k]
-            self.final_visto = dados.get("final_visto") is True
+            if dados["versao"] == VERSAO:
+                self.pega_opcoes(dados["opcoes"])
+                self.pega_recordes(dados["recordes"])
+                self.final_visto = bool(dados["final_visto"])
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
 
-    def salvar(self):
+    def pega_opcoes(self, opcoes):
+        for nome, valor in opcoes.items():
+            if nome in self.opcoes and type(valor) is int:
+                self.opcoes[nome] = max(0, min(10, valor))
+
+    def pega_recordes(self, recordes):
+        for mundo, r in recordes.items():
+            if type(r) is dict:
+                self.recordes[mundo] = {k: v for k, v in r.items() if valor_presta(k, v)}
+
+    def salva(self):
+        dados = {"versao": VERSAO, "recordes": self.recordes,
+                 "opcoes": self.opcoes, "final_visto": self.final_visto}
         try:
-            tmp = ARQUIVO_SAVE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"versao": VERSAO, "recordes": self.recordes,
-                           "opcoes": self.opcoes,
-                           "final_visto": self.final_visto}, f, indent=1)
-            os.replace(tmp, ARQUIVO_SAVE)
+            with open(ONDE_SALVA + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(dados, f, indent=1)
+            os.replace(ONDE_SALVA + ".tmp", ONDE_SALVA)
         except OSError as erro:
             print(f"[save] nao foi possivel gravar: {erro}")
 
     def recorde(self, mundo):
-        """O recorde da fase do mundo `mundo` (fase.cancao)."""
-        r = self.recordes.setdefault(str(mundo), dict(VAZIO))
-        for k, v in VAZIO.items():
-            r.setdefault(k, v)
+        if mundo not in self.recordes:
+            self.recordes[mundo] = dict(VAZIO)
+        r = self.recordes[mundo]
+        for k in VAZIO:
+            if k not in r:
+                r[k] = VAZIO[k]
         return r
 
-    def registrar(self, mundo, pct, completou, pontos, nota, precisao, ecos=0):
-        """Guarda o melhor de cada campo (nunca piora um recorde)."""
+    def anota(self, mundo, porcento, completou, pontos, nota, precisao, ecos):
         r = self.recorde(mundo)
-        r["melhor"] = max(r["melhor"], round(pct, 2))
+        r["melhor"] = max(r["melhor"], round(porcento, 2))
         if pontos > r["pontos"]:
-            r["pontos"] = int(pontos)
+            r["pontos"] = pontos
             r["precisao"] = round(precisao, 4)
-        if ORDEM_NOTAS.get(nota, 0) > ORDEM_NOTAS.get(r["nota"], 0):
+        if ORDEM_DAS_NOTAS.index(nota) > ORDEM_DAS_NOTAS.index(r["nota"]):
             r["nota"] = nota
-        r["completou"] = r["completou"] or completou
-        r["ecos"] = max(r["ecos"], int(ecos))
-        self.salvar()
-        return r
+        if completou:
+            r["completou"] = True
+        r["ecos"] = max(r["ecos"], ecos)
+        self.salva()
 
-    def progresso(self, mundos):
-        """(fases completas, soma dos pontos) das fases dos `mundos`."""
-        completas = pontos = 0
-        for mundo in mundos:
-            r = self.recordes.get(mundo)
-            if r:
-                completas += bool(r.get("completou"))
-                pontos += int(r.get("pontos", 0))
-        return completas, pontos
+    def progresso(self, os_mundos):
+        quantas_completas = 0
+        pontos = 0
+        for mundo in os_mundos:
+            if mundo in self.recordes:
+                r = self.recorde(mundo)
+                if r["completou"]:
+                    quantas_completas += 1
+                pontos += r["pontos"]
+        return quantas_completas, pontos
 
 
-save = Save()
+save = Salvo()
